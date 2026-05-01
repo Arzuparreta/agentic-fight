@@ -131,14 +131,14 @@ async function resolveAgentAction(
     if (!['approach', 'retreat', 'attack', 'defend', 'idle'].includes(plan.plan)) {
       if (retries < MAX_RETRIES) {
         console.log(`[Tick ${state.tick}] Agent ${agent.id} invalid plan "${plan.plan}". Retrying...`);
-        return resolveAgentAction(state, agent, config, llm, runtimes, retries + 1);
+        return resolveAgentAction(state, agent, config, planClient, runtimes, retries + 1);
       }
       console.log(`[Tick ${state.tick}] Agent ${agent.id} exhausted plan retries. Falling back to approach.`);
       runtime = { plan: { plan: 'approach', preferredMove: 'basic_attack', reasoning: 'Fallback plan.' }, planExpiresAt: state.tick + PLAN_INTERVAL };
     } else if (plan.preferredMove !== 'idle' && !available.includes(plan.preferredMove)) {
       if (retries < MAX_RETRIES) {
         console.log(`[Tick ${state.tick}] Agent ${agent.id} preferred move "${plan.preferredMove}" unavailable. Retrying...`);
-        return resolveAgentAction(state, agent, config, llm, runtimes, retries + 1);
+        return resolveAgentAction(state, agent, config, planClient, runtimes, retries + 1);
       }
       runtime = { plan: { ...plan, preferredMove: 'basic_attack' }, planExpiresAt: state.tick + PLAN_INTERVAL };
     } else {
