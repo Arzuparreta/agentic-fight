@@ -3,10 +3,11 @@ import {
   GameState,
   SimEvent,
   Stats,
-  ARENA_WIDTH,
+  ARENA,
   MAX_TICKS_PER_ROUND,
   STARTING_HP,
   MOVEMENT_SPEED,
+  Vec2,
 } from '@shared/index';
 
 export interface AgentConfig {
@@ -14,7 +15,7 @@ export interface AgentConfig {
   name: string;
   stats: Stats;
   moves: string[];
-  playstyleMemory: string; // freeform tactical mindset — evolves via coaching
+  playstyleMemory: string;
   characterDescription: string;
 }
 
@@ -22,7 +23,7 @@ export function createInitialState(agentA: AgentConfig, agentB: AgentConfig): Ga
   const a: AgentState = {
     id: agentA.id,
     name: agentA.name,
-    position: Math.floor(ARENA_WIDTH * 0.25),
+    position: { x: Math.floor(ARENA.width * 0.25), y: Math.floor(ARENA.height * 0.5) },
     hp: agentA.stats.maxHp,
     maxHp: agentA.stats.maxHp,
     stats: agentA.stats,
@@ -35,7 +36,7 @@ export function createInitialState(agentA: AgentConfig, agentB: AgentConfig): Ga
   const b: AgentState = {
     id: agentB.id,
     name: agentB.name,
-    position: Math.floor(ARENA_WIDTH * 0.75),
+    position: { x: Math.floor(ARENA.width * 0.75), y: Math.floor(ARENA.height * 0.5) },
     hp: agentB.stats.maxHp,
     maxHp: agentB.stats.maxHp,
     stats: agentB.stats,
@@ -66,7 +67,6 @@ export function advanceCooldowns(state: GameState): void {
         agent.cooldowns[key]--;
       }
     }
-    // Tick down status effects
     agent.statusEffects = agent.statusEffects.filter((se) => {
       se.remainingTicks--;
       return se.remainingTicks > 0;

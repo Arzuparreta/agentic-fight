@@ -1,12 +1,13 @@
-import { Room, RoomPlayer, SimEvent, RoundResult, Message, DisconnectState, STARTING_MONEY } from '@shared/index';
+import { Room, RoomPlayer, SimEvent, RoundResult, CoachingMessage, STARTING_MONEY, PlaystyleProfile } from '@shared/index';
 import { AgentConfig } from '../game/state';
 import { simulateRound, PlanClient } from '../game/engine';
 import { calculateEarnings, EconomyState } from '../game/economy';
 import { purchaseItem } from '../game/shop';
-import { updatePlaystyleMemory, CoachingMessage } from '../llm/ollama';
+import { synthesizePlaystyle, CoachingContext, generateAgentOpeningMessage, generateAgentResponse } from '../llm/ollama';
+import { MOVE_CATALOG } from '@shared/index';
 
 const RECONNECT_TIMEOUT_MS = 10000;
-const ROUNDS_TO_WIN = 3; // Best of 5
+const ROUNDS_TO_WIN = 3;
 
 function generateRoomId(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -34,7 +35,35 @@ function createRoomPlayer(
     money: STARTING_MONEY,
     coachingMessages: [],
     playstyleMemory: '',
+    playstyleProfile: null,
     ready: false,
+  };
+}
+
+function buildCoachingContext(player: RoomPlayer, room: Room): CoachingContext {
+  const ownedMoves = player.moves.filter(m => MOVE_CATALOG[m]?.type === 'move');
+  const ownedBoosts = player.moves.filter(m => MOVE_CATALOG[m]?.type === 'boost');
+
+  let lastRoundResult: CoachingContext['lastRoundResult'];
+  if (room.roundHistory.length > 0) {
+    const last = room.roundHistory[room.roundHistory.length - 1];
+    const won = last.winnerId === player.id;
+    const score = `${room.wins[player.id] || 0}-${Object.values(room.wins).reduce((s, w, i) => i === 0 ? s : s, 0)}`;
+    const notes = won ? 'Victory was yours.' : 'You were defeated.';
+    lastRoundResult = { won, score, notes };
+  }
+
+  const opponent = Object.values(room.players).find(p => p.role === 'mobile' && p.id !== player.id);
+
+  return {
+    agentName: player.agentName,
+    characterDescription: player.characterDescription,
+    money: player.money,
+    ownedMoves,
+    ownedBoosts,
+    lastRoundResult,
+    opponentCharacter: opponent?.characterDescription,
+    roundNumber: room.currentRound,
   };
 }
 
@@ -60,7 +89,6 @@ export class RoomManager {
       wins: {},
     };
 
-    // Browser joins automatically as the room creator
     const browserPlayer = createRoomPlayer(browserSocketId, 'browser', 'Browser Display');
     room.players[browserPlayer.id] = browserPlayer;
     room.socketToPlayer[browserSocketId] = browserPlayer.id;
@@ -85,13 +113,11 @@ export class RoomManager {
       return { error: 'Room not found.' };
     }
 
-    // Check if this socket is reconnecting
     if (room.socketToPlayer[socketId]) {
       const playerId = room.socketToPlayer[socketId];
       return { room, player: room.players[playerId] };
     }
 
-    // Check for mobile capacity
     if (role === 'mobile') {
       const mobileCount = Object.values(room.players).filter((p) => p.role === 'mobile').length;
       if (mobileCount >= 2) {
@@ -106,7 +132,6 @@ export class RoomManager {
     room.economy.consecutiveLosses[player.id] = 0;
     room.wins[player.id] = 0;
 
-    // If 2 mobiles joined, transition to coaching
     const mobiles = Object.values(room.players).filter((p) => p.role === 'mobile');
     if (mobiles.length === 2 && room.phase === 'lobby') {
       room.phase = 'coaching';
@@ -123,13 +148,11 @@ export class RoomManager {
       const player = room.players[playerId];
       if (!player) continue;
 
-      // Browser disconnecting is less critical
       if (player.role === 'browser') {
         delete room.socketToPlayer[socketId];
         return { room, playerId };
       }
 
-      // Mobile disconnecting: start reconnect timer
       const timer = setTimeout(() => {
         this.handleDisconnectTimeout(room.id, playerId);
       }, RECONNECT_TIMEOUT_MS);
@@ -161,14 +184,12 @@ export class RoomManager {
       return { error: 'Player not found in room.' };
     }
 
-    // Cancel disconnect timer
     const disc = room.disconnects[oldPlayerId];
     if (disc) {
       clearTimeout(disc.timer);
       delete room.disconnects[oldPlayerId];
     }
 
-    // Update socket mapping
     room.socketToPlayer[socketId] = oldPlayerId;
     player.socketId = socketId;
 
@@ -179,13 +200,11 @@ export class RoomManager {
     const room = this.getRoom(roomId);
     if (!room) return;
 
-    // If player already reconnected, do nothing
     if (!room.disconnects[playerId]) return;
 
     delete room.disconnects[playerId];
     delete room.players[playerId];
 
-    // Forfeit: opponent wins the match
     const opponent = Object.values(room.players).find(
       (p) => p.role === 'mobile' && p.id !== playerId
     );
@@ -195,11 +214,35 @@ export class RoomManager {
     }
   }
 
-  async addCoachingMessage(
+  async startCoachingConversation(roomId: string): Promise<{ room: Room; agentMessages: Record<string, string> } | { error: string }> {
+    const room = this.getRoom(roomId);
+    if (!room) return { error: 'Room not found.' };
+    if (room.phase !== 'coaching') return { error: 'Not in coaching phase.' };
+
+    const mobiles = Object.values(room.players).filter(p => p.role === 'mobile');
+    const agentMessages: Record<string, string> = {};
+
+    await Promise.all(
+      mobiles.map(async (player) => {
+        const ctx = buildCoachingContext(player, room);
+        const openingMessage = await generateAgentOpeningMessage(ctx);
+        player.coachingMessages.push({
+          sender: 'agent',
+          content: openingMessage,
+          timestamp: Date.now(),
+        });
+        agentMessages[player.id] = openingMessage;
+      })
+    );
+
+    return { room, agentMessages };
+  }
+
+  async handlePlayerCoachingMessage(
     roomId: string,
     playerId: string,
     content: string
-  ): Promise<{ room: Room } | { error: string }> {
+  ): Promise<{ room: Room; agentResponse: string } | { error: string }> {
     const room = this.getRoom(roomId);
     if (!room) return { error: 'Room not found.' };
 
@@ -212,7 +255,16 @@ export class RoomManager {
       timestamp: Date.now(),
     });
 
-    return { room };
+    const ctx = buildCoachingContext(player, room);
+    const agentResponse = await generateAgentResponse(ctx, player.coachingMessages, content);
+
+    player.coachingMessages.push({
+      sender: 'agent',
+      content: agentResponse,
+      timestamp: Date.now(),
+    });
+
+    return { room, agentResponse };
   }
 
   async markCoachingReady(
@@ -228,30 +280,20 @@ export class RoomManager {
 
     player.ready = true;
 
-    // Check if all mobile players are ready
     const mobiles = Object.values(room.players).filter((p) => p.role === 'mobile');
     const allReady = mobiles.length === 2 && mobiles.every((p) => p.ready);
 
     if (allReady) {
-      // Update playstyle memories for both players
       await Promise.all(
         mobiles.map(async (p) => {
-          const msgs: CoachingMessage[] = p.coachingMessages.map((m) => ({
-            sender: m.sender as 'player' | 'agent',
-            content: m.content,
-          }));
-          p.playstyleMemory = await updatePlaystyleMemory(
-            p.playstyleMemory,
-            p.characterDescription,
-            msgs
-          );
+          const ctx = buildCoachingContext(p, room);
+          const profile = await synthesizePlaystyle(ctx, p.coachingMessages);
+          p.playstyleProfile = profile;
+          p.playstyleMemory = JSON.stringify(profile);
         })
       );
 
-      // Reset ready flags
       mobiles.forEach((p) => (p.ready = false));
-
-      // Transition to simulating
       room.phase = 'simulating';
     }
 
@@ -294,7 +336,6 @@ export class RoomManager {
 
     room.eventLog = simResult.eventLog;
 
-    // Determine winner
     const winnerId = simResult.winnerId;
     if (winnerId) {
       room.wins[winnerId] = (room.wins[winnerId] || 0) + 1;
@@ -303,17 +344,14 @@ export class RoomManager {
     const roundResult: RoundResult = {
       roundNumber: room.currentRound,
       winnerId,
-      agentA: { id: pA.id, hpRemaining: winnerId === pA.id ? (winnerId ? 1 : 100) : 0 }, // Simplified, will fix
-      agentB: { id: pB.id, hpRemaining: winnerId === pB.id ? (winnerId ? 1 : 100) : 0 },
+      agentA: { id: pA.id, hpRemaining: 0 },
+      agentB: { id: pB.id, hpRemaining: 0 },
       earnings: {},
     };
 
-    // Fix HP remaining — get from final sim state
     const finalEvents = simResult.eventLog;
-    const deathEvents = finalEvents.filter((e) => e.type === 'death');
     const hitEvents = finalEvents.filter((e) => e.type === 'hit');
 
-    // Calculate remaining HP from hit events
     let hpA = pA.stats.maxHp;
     let hpB = pB.stats.maxHp;
     for (const ev of hitEvents) {
@@ -327,12 +365,10 @@ export class RoomManager {
     roundResult.agentA.hpRemaining = hpA;
     roundResult.agentB.hpRemaining = hpB;
 
-    // Calculate economy
     const { earnings, newEconomy } = calculateEarnings(roundResult, room.economy);
     roundResult.earnings = earnings;
     room.economy = newEconomy;
 
-    // Update player money
     for (const mobile of mobiles) {
       mobile.money = room.economy.money[mobile.id] || 0;
     }
@@ -350,7 +386,6 @@ export class RoomManager {
     if (!room) return { error: 'Room not found.' };
     if (room.phase !== 'playback') return { error: 'Not in playback phase.' };
 
-    // Check if match is over
     const mobiles = Object.values(room.players).filter((p) => p.role === 'mobile');
     for (const mobile of mobiles) {
       if ((room.wins[mobile.id] || 0) >= ROUNDS_TO_WIN) {
@@ -359,11 +394,9 @@ export class RoomManager {
       }
     }
 
-    // Transition to shop
     room.phase = 'shop';
     room.currentRound++;
 
-    // Reset coaching state for next round
     for (const mobile of mobiles) {
       mobile.coachingMessages = [];
       mobile.ready = false;
@@ -400,7 +433,6 @@ export class RoomManager {
 
     player.ready = true;
 
-    // Check if all mobile players are ready
     const mobiles = Object.values(room.players).filter((p) => p.role === 'mobile');
     const allReady = mobiles.length === 2 && mobiles.every((p) => p.ready);
 
@@ -416,7 +448,6 @@ export class RoomManager {
     const room = this.getRoom(roomId);
     if (!room) return undefined;
 
-    // Return a sanitized version without internal timers
     const sanitized: Room = {
       ...room,
       disconnects: {},

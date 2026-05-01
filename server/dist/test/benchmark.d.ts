@@ -1,0 +1,5 @@
+declare const OLLAMA_URL = "http://localhost:11434";
+declare const MODEL = "gemma4:latest";
+declare const TEST_PROMPT = "You are Don Rodrigo, a proud Castilian knight.\nHow you currently think about fighting: I rush the opponent and strike without hesitation.\n\nCurrent situation (tick 47 of 600):\n- Your position: 340 | Opponent position: 680\n- Your HP: 75/100 | Opponent HP: 60/100\n- Distance to opponent: 340 units\n- Available actions: basic_attack (ready), move_left (ready), move_right (ready), idle (ready)\n\nRespond with exactly one JSON object: { \"action\": \"...\", \"reasoning\": \"...\" }\nValid actions: move_left, move_right, basic_attack, idle\nThe reasoning should explain your tactical thinking in one short sentence.";
+declare function benchmark(): Promise<void>;
+//# sourceMappingURL=benchmark.d.ts.map

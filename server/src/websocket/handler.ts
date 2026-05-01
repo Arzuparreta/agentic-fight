@@ -5,10 +5,6 @@ export function registerHandlers(io: Server, roomManager: RoomManager) {
   io.on('connection', (socket: Socket) => {
     console.log(`[WS] Client connected: ${socket.id}`);
 
-    // --------------------------------------------------------------
-    // Room Lifecycle
-    // --------------------------------------------------------------
-
     socket.on('create_room', () => {
       const room = roomManager.createRoom(socket.id);
       socket.join(room.id);
@@ -16,7 +12,7 @@ export function registerHandlers(io: Server, roomManager: RoomManager) {
       console.log(`[WS] Room created: ${room.id} by ${socket.id}`);
     });
 
-    socket.on('join_room', (data: { roomId: string; role: 'browser' | 'mobile'; agentName?: string; characterDescription?: string }) => {
+    socket.on('join_room', async (data: { roomId: string; role: 'browser' | 'mobile'; agentName?: string; characterDescription?: string }) => {
       const result = roomManager.joinRoom(
         socket.id,
         data.roomId,
@@ -34,6 +30,21 @@ export function registerHandlers(io: Server, roomManager: RoomManager) {
       socket.emit('joined_room', { roomId: result.room.id, playerId: result.player.id });
       io.to(result.room.id).emit('room_state', roomManager.getPublicRoomState(result.room.id));
       console.log(`[WS] ${data.role} joined room ${result.room.id}: ${result.player.id}`);
+
+      if (result.room.phase === 'coaching') {
+        const coachingResult = await roomManager.startCoachingConversation(result.room.id);
+        if (!('error' in coachingResult)) {
+          for (const [playerId, message] of Object.entries(coachingResult.agentMessages)) {
+            const player = result.room.players[playerId];
+            if (player) {
+              io.to(player.socketId).emit('agent_coaching_message', {
+                content: message,
+                timestamp: Date.now(),
+              });
+            }
+          }
+        }
+      }
     });
 
     socket.on('reconnect', (data: { roomId: string; oldPlayerId: string }) => {
@@ -49,19 +60,20 @@ export function registerHandlers(io: Server, roomManager: RoomManager) {
       console.log(`[WS] Reconnected ${result.player.id} to room ${result.room.id}`);
     });
 
-    // --------------------------------------------------------------
-    // Coaching Phase
-    // --------------------------------------------------------------
-
     socket.on('coaching_message', async (data: { roomId: string; playerId: string; content: string }) => {
-      const result = await roomManager.addCoachingMessage(data.roomId, data.playerId, data.content);
+      const result = await roomManager.handlePlayerCoachingMessage(data.roomId, data.playerId, data.content);
       if ('error' in result) {
         socket.emit('error', { message: result.error });
         return;
       }
 
-      // Echo message to the sender's mobile
       socket.emit('coaching_echo', { content: data.content, timestamp: Date.now() });
+
+      io.to(result.room.id).emit('agent_coaching_message', {
+        content: result.agentResponse,
+        timestamp: Date.now(),
+      });
+
       console.log(`[WS] Coaching message in room ${data.roomId} from ${data.playerId}`);
     });
 
@@ -75,7 +87,6 @@ export function registerHandlers(io: Server, roomManager: RoomManager) {
       io.to(result.room.id).emit('room_state', roomManager.getPublicRoomState(result.room.id));
 
       if (result.room.phase === 'simulating') {
-        // Both ready — run simulation
         const simResult = await roomManager.runSimulation(result.room.id);
         if ('error' in simResult) {
           io.to(result.room.id).emit('error', { message: simResult.error });
@@ -90,10 +101,6 @@ export function registerHandlers(io: Server, roomManager: RoomManager) {
         console.log(`[WS] Simulation complete for room ${result.room.id}`);
       }
     });
-
-    // --------------------------------------------------------------
-    // Playback Phase
-    // --------------------------------------------------------------
 
     socket.on('playback_complete', (data: { roomId: string }) => {
       const result = roomManager.markPlaybackComplete(data.roomId);
@@ -117,10 +124,6 @@ export function registerHandlers(io: Server, roomManager: RoomManager) {
       console.log(`[WS] Playback complete for room ${data.roomId}, phase: ${result.room.phase}`);
     });
 
-    // --------------------------------------------------------------
-    // Shop Phase
-    // --------------------------------------------------------------
-
     socket.on('purchase_item', (data: { roomId: string; playerId: string; itemId: string }) => {
       const result = roomManager.purchaseItem(data.roomId, data.playerId, data.itemId);
       if ('error' in result) {
@@ -133,7 +136,7 @@ export function registerHandlers(io: Server, roomManager: RoomManager) {
       console.log(`[WS] Purchase in room ${data.roomId}: ${data.playerId} bought ${data.itemId}`);
     });
 
-    socket.on('shop_ready', (data: { roomId: string; playerId: string }) => {
+    socket.on('shop_ready', async (data: { roomId: string; playerId: string }) => {
       const result = roomManager.markShopReady(data.roomId, data.playerId);
       if ('error' in result) {
         socket.emit('error', { message: result.error });
@@ -144,14 +147,21 @@ export function registerHandlers(io: Server, roomManager: RoomManager) {
 
       if (result.room.phase === 'coaching') {
         io.to(result.room.id).emit('phase_change', { newPhase: 'coaching' });
+
+        const coachingResult = await roomManager.startCoachingConversation(result.room.id);
+        if (!('error' in coachingResult)) {
+          for (const [playerId, message] of Object.entries(coachingResult.agentMessages)) {
+            const player = result.room.players[playerId];
+            if (player) {
+              io.to(player.socketId).emit('agent_coaching_message', {
+                content: message,
+                timestamp: Date.now(),
+              });
+            }
+          }
+        }
       }
-
-      console.log(`[WS] Shop ready in room ${data.roomId}, phase: ${result.room.phase}`);
     });
-
-    // --------------------------------------------------------------
-    // Disconnect
-    // --------------------------------------------------------------
 
     socket.on('disconnect', () => {
       console.log(`[WS] Client disconnected: ${socket.id}`);

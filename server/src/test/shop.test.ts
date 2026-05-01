@@ -12,6 +12,7 @@ function createTestPlayer(id: string, money: number, moves: string[] = [], stats
     money,
     coachingMessages: [],
     playstyleMemory: '',
+    playstyleProfile: null,
     ready: false,
   };
 }
@@ -19,9 +20,6 @@ function createTestPlayer(id: string, money: number, moves: string[] = [], stats
 function runTests() {
   console.log('=== Shop & Economy Tests ===\n');
 
-  // ---- Shop Tests ----
-
-  // Test 1: Buy a move
   console.log('Test 1: Buy sword_lunge');
   const p1 = createTestPlayer('p1', 1000);
   const r1 = purchaseItem(p1, 'sword_lunge');
@@ -33,7 +31,6 @@ function runTests() {
     process.exit(1);
   }
 
-  // Test 2: Not enough money
   console.log('\nTest 2: Buy crossbow without enough money');
   const p2 = createTestPlayer('p2', 500);
   const r2 = purchaseItem(p2, 'crossbow');
@@ -43,7 +40,6 @@ function runTests() {
     process.exit(1);
   }
 
-  // Test 3: Duplicate purchase
   console.log('\nTest 3: Buy sword_lunge twice');
   const p3 = createTestPlayer('p3', 2000, ['sword_lunge']);
   const r3 = purchaseItem(p3, 'sword_lunge');
@@ -53,7 +49,6 @@ function runTests() {
     process.exit(1);
   }
 
-  // Test 4: Buy boost (hp_boost)
   console.log('\nTest 4: Buy hp_boost');
   const p4 = createTestPlayer('p4', 1000);
   const r4 = purchaseItem(p4, 'hp_boost');
@@ -65,7 +60,6 @@ function runTests() {
     process.exit(1);
   }
 
-  // Test 5: Available items
   console.log('\nTest 5: Available items after purchases');
   const p5 = createTestPlayer('p5', 5000, ['sword_lunge', 'hp_boost']);
   const available = getAvailableItems(p5);
@@ -75,11 +69,8 @@ function runTests() {
     process.exit(1);
   }
 
-  // ---- Economy Tests ----
-
   console.log('\n=== Economy Tests ===\n');
 
-  // Test 6: Winner and loser earnings
   console.log('Test 6: Winner gets 3000, loser gets 1400');
   const roundResult: RoundResult = {
     roundNumber: 1,
@@ -102,7 +93,6 @@ function runTests() {
     process.exit(1);
   }
 
-  // Test 7: Consecutive loss bonus
   console.log('\nTest 7: Consecutive loss bonus');
   const roundResult2: RoundResult = {
     roundNumber: 2,
@@ -123,11 +113,10 @@ function runTests() {
     process.exit(1);
   }
 
-  // Test 8: Max loss bonus cap
   console.log('\nTest 8: Max loss bonus cap (600)');
   const econ3: EconomyState = {
     money: { p1: 5000, p2: 5000 },
-    consecutiveLosses: { p1: 0, p2: 10 }, // way over cap
+    consecutiveLosses: { p1: 0, p2: 10 },
   };
   const { earnings: e3 } = calculateEarnings(roundResult, econ3);
   console.log(`  p2 earnings: ${e3.p2} (expected: 2000 — 1400 + 600 max bonus)`);

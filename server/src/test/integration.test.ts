@@ -1,10 +1,11 @@
 import { RoomManager } from '../rooms/manager';
 import { PlanClient } from '../game/engine';
 
-// Dummy plan client for fast testing
 const dummyPlanClient: PlanClient = {
   getPlan: async (agent, opponent) => {
-    const dist = Math.abs(agent.position - opponent.position);
+    const dx = agent.position.x - opponent.position.x;
+    const dy = agent.position.y - opponent.position.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
     const onCooldown = (agent.cooldowns['basic_attack'] ?? 0) > 0;
 
     if (dist <= 80 && !onCooldown) {
@@ -12,7 +13,6 @@ const dummyPlanClient: PlanClient = {
     }
 
     if (dist <= 80 && onCooldown) {
-      // In range but on cooldown — reposition or wait
       return { plan: 'approach', preferredMove: 'basic_attack', reasoning: 'Closing in while cooldown refreshes.' };
     }
 
@@ -25,14 +25,12 @@ async function runIntegrationTest() {
 
   const manager = new RoomManager();
 
-  // Step 1: Browser creates room
   console.log('Step 1: Browser creates room');
   const room = manager.createRoom('browser-1');
   const roomId = room.id;
   console.log(`  Room created: ${roomId}`);
   console.log(`  Phase: ${room.phase}`);
 
-  // Step 2: Mobile 1 joins
   console.log('\nStep 2: Mobile 1 joins');
   const j1 = manager.joinRoom('mobile-1', roomId, 'mobile', 'Don Rodrigo', 'a proud Castilian knight');
   if ('error' in j1) {
@@ -42,7 +40,6 @@ async function runIntegrationTest() {
   console.log(`  Joined: ${j1.player.id}`);
   console.log(`  Phase: ${j1.room.phase}`);
 
-  // Step 3: Mobile 2 joins → transitions to coaching
   console.log('\nStep 3: Mobile 2 joins');
   const j2 = manager.joinRoom('mobile-2', roomId, 'mobile', 'Al-Mansur', 'a fierce Moorish warrior');
   if ('error' in j2) {
@@ -55,20 +52,22 @@ async function runIntegrationTest() {
   const p1Id = j1.player.id;
   const p2Id = j2.player.id;
 
-  // Step 4: Coaching messages
   console.log('\nStep 4: Send coaching messages');
-  await manager.addCoachingMessage(roomId, p1Id, 'Be aggressive!');
-  await manager.addCoachingMessage(roomId, p2Id, 'Stay defensive.');
+  await manager.handlePlayerCoachingMessage(roomId, p1Id, 'Be aggressive!');
+  await manager.handlePlayerCoachingMessage(roomId, p2Id, 'Stay defensive.');
   console.log('  Messages sent');
 
-  // Step 5: Bypass Ollama — manually set playstyle memories and phase
   console.log('\nStep 5: Set playstyle memories (bypassing Ollama)');
-  room.players[p1Id].playstyleMemory = 'I rush forward and strike without mercy.';
-  room.players[p2Id].playstyleMemory = 'I wait for the opponent to make a mistake, then punish them.';
+  const defaultProfile = JSON.stringify({
+    narrative: 'I fight to win.',
+    parameters: { aggressiveness: 50, risk_tolerance: 50, preferred_range: 50, patience: 50, defensiveness: 50, combo_preference: 50 },
+    directives: [],
+  });
+  room.players[p1Id].playstyleMemory = defaultProfile;
+  room.players[p2Id].playstyleMemory = defaultProfile;
   room.phase = 'simulating';
   console.log('  Memories set, phase forced to simulating');
 
-  // Step 6: Run simulation with dummy plan client
   console.log('\nStep 6: Run simulation');
   const simResult = await manager.runSimulation(roomId, dummyPlanClient);
   if ('error' in simResult) {
@@ -88,8 +87,7 @@ async function runIntegrationTest() {
     process.exit(1);
   }
 
-  // Step 7: Playback complete → shop
-  console.log('\nStep 7: Playback complete → shop');
+  console.log('\nStep 7: Playback complete -> shop');
   const pbResult = manager.markPlaybackComplete(roomId);
   if ('error' in pbResult) {
     console.error('FAIL:', pbResult.error);
@@ -105,7 +103,6 @@ async function runIntegrationTest() {
     process.exit(1);
   }
 
-  // Step 8: Purchase items
   console.log('\nStep 8: Purchase items');
   const buy1 = manager.purchaseItem(roomId, p1Id, 'sword_lunge');
   if ('error' in buy1) {
@@ -124,8 +121,7 @@ async function runIntegrationTest() {
   console.log(`  P2 bought hp_boost: ${buy2.result.success}`);
   console.log(`  P2 max HP: ${buy2.room.players[p2Id].stats.maxHp}`);
 
-  // Step 9: Shop ready → coaching (Round 2)
-  console.log('\nStep 9: Shop ready → Round 2 coaching');
+  console.log('\nStep 9: Shop ready -> Round 2 coaching');
   manager.markShopReady(roomId, p1Id);
   const afterP1 = manager.getPublicRoomState(roomId)!;
   console.log(`  After P1 ready: ${afterP1.phase}`);
@@ -144,7 +140,6 @@ async function runIntegrationTest() {
     process.exit(1);
   }
 
-  // Step 10: Verify persistent state
   console.log('\nStep 10: Verify persistent state across rounds');
   console.log(`  P1 moves (carried): ${afterBoth.players[p1Id].moves.join(', ')}`);
   console.log(`  P2 max HP (carried): ${afterBoth.players[p2Id].stats.maxHp}`);
@@ -160,9 +155,8 @@ async function runIntegrationTest() {
     process.exit(1);
   }
 
-  // Step 11: Run Round 2 simulation with dummy plan client
   console.log('\nStep 11: Run Round 2 simulation');
-  room.phase = 'simulating'; // bypass coaching ready again
+  room.phase = 'simulating';
   const sim2 = await manager.runSimulation(roomId, dummyPlanClient);
   if ('error' in sim2) {
     console.error('FAIL:', sim2.error);
@@ -170,9 +164,8 @@ async function runIntegrationTest() {
   }
   console.log(`  Winner: ${sim2.result.winnerId || 'draw'}`);
 
-  // Step 12: End match (force wins)
   console.log('\nStep 12: End match');
-  room.wins[p1Id] = 3; // Force P1 to win match
+  room.wins[p1Id] = 3;
   const pb2 = manager.markPlaybackComplete(roomId);
   if ('error' in pb2) {
     console.error('FAIL:', pb2.error);

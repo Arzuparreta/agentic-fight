@@ -1,5 +1,5 @@
 import { io, Socket } from 'socket.io-client';
-import { SimEvent, RoundResult } from '@shared/index';
+import { SimEvent, RoundResult, Vec2, ARENA } from '@shared/index';
 import { Renderer } from './canvas/renderer';
 import { PlaybackController } from './game/playback';
 
@@ -9,7 +9,6 @@ let playback: PlaybackController | null = null;
 let currentRoomId = '';
 let roomPlayers: Record<string, { name: string; characterDescription: string }> = {};
 
-// Auto-detect server URL from current location
 const SERVER_URL = window.location.origin;
 
 export function connectToServer() {
@@ -28,7 +27,6 @@ export function connectToServer() {
 
   socket.on('room_state', (room) => {
     console.log('Room state updated:', room.phase);
-    // Track mobile player info for sprite selection
     if (room.players) {
       for (const [id, player] of Object.entries(room.players)) {
         const p = player as { agentName?: string; characterDescription?: string };
@@ -45,11 +43,11 @@ export function connectToServer() {
   socket.on('phase_change', (data: { newPhase: string }) => {
     console.log(`Phase changed: ${data.newPhase}`);
     if (data.newPhase === 'playback') {
-      showMessage('¡La batalla comienza!');
+      showMessage('La batalla comienza!');
     } else if (data.newPhase === 'shop') {
       showMessage('Tienda abierta');
     } else if (data.newPhase === 'ended') {
-      showMessage('¡Partida terminada!');
+      showMessage('Partida terminada!');
     }
   });
 
@@ -64,7 +62,7 @@ export function connectToServer() {
 
   socket.on('match_ended', (data: { wins: Record<string, number> }) => {
     console.log('Match ended:', data.wins);
-    showMessage('¡Partida finalizada!');
+    showMessage('Partida finalizada!');
   });
 
   socket.on('disconnect', () => {
@@ -128,7 +126,6 @@ function showMessage(text: string) {
 function startPlayback(eventLog: SimEvent[], _roundResult: RoundResult) {
   if (!renderer) return;
 
-  // Clear the room code overlay so the fight is visible
   const ui = document.getElementById('ui')!;
   ui.innerHTML = '';
 
@@ -137,30 +134,30 @@ function startPlayback(eventLog: SimEvent[], _roundResult: RoundResult) {
     agentIds.add(ev.agentId);
   }
 
-  const agentConfigs: { id: string; name: string; description: string; position: number; hp: number; maxHp: number }[] = [];
+  const agentConfigs: { id: string; name: string; description: string; position: Vec2; hp: number; maxHp: number }[] = [];
 
   for (const id of agentIds) {
-    let position = 250;
-    let hp = 100;
-    let maxHp = 100;
+    let position: Vec2 = { x: ARENA.width * 0.25, y: ARENA.height * 0.5 };
+    let hp = 150;
+    let maxHp = 150;
     const playerInfo = roomPlayers[id];
     let name = playerInfo?.name || id;
     let description = playerInfo?.characterDescription || 'a fighter';
 
     for (const ev of eventLog) {
       if (ev.agentId === id && ev.type === 'move' && ev.payload.newPosition !== undefined) {
-        position = ev.payload.newPosition as number;
+        const pos = ev.payload.newPosition as Vec2;
+        if (pos.x !== undefined && pos.y !== undefined) {
+          position = pos;
+        }
         break;
       }
     }
 
-    // Try to infer maxHp from hit events
     for (const ev of eventLog) {
       if (ev.agentId === id && ev.type === 'hit') {
         const remaining = ev.payload.hpRemaining as number;
-        const damage = ev.payload.damage as number;
-        if (remaining !== undefined && damage !== undefined) {
-          // We can't know maxHp from a single hit, but we can track the max seen
+        if (remaining !== undefined) {
           hp = remaining;
         }
       }
@@ -172,7 +169,7 @@ function startPlayback(eventLog: SimEvent[], _roundResult: RoundResult) {
   renderer.setAgents(agentConfigs);
   renderer.setMaxTicks(600);
   renderer.setTick(0);
-  renderer.setSnapToEvent(true); // snap instantly to exact event positions during playback
+  renderer.setSnapToEvent(true);
 
   if (playback) {
     playback.stop();

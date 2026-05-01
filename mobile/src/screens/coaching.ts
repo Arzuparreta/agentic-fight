@@ -12,13 +12,10 @@ export function renderCoachingScreen(
     <div style="display: flex; flex-direction: column; height: 100%;">
       <div style="padding: 15px; background: #2c1810; border-bottom: 2px solid #5d4037; text-align: center;">
         <h2 style="margin: 0; font-size: 18px;">Coach Your Agent</h2>
-        <p style="margin: 5px 0 0; font-size: 12px; opacity: 0.6;">Round in progress. Give tactical advice.</p>
+        <p style="margin: 5px 0 0; font-size: 12px; opacity: 0.6;">Your agent is listening. Guide them to victory.</p>
       </div>
       
       <div id="chat-history" style="flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 10px;">
-        <div style="align-self: center; background: #2c1810; padding: 10px 20px; border-radius: 20px; font-size: 12px; opacity: 0.6;">
-          Your agent awaits your counsel...
-        </div>
       </div>
       
       <div style="padding: 10px; background: #1a1a1a; border-top: 2px solid #5d4037; display: flex; gap: 10px;">
@@ -27,7 +24,7 @@ export function renderCoachingScreen(
       </div>
       
       <button id="ready-btn" style="margin: 10px; padding: 18px; background: #27ae60; color: white; border: none; border-radius: 8px; font-family: Georgia, serif; font-size: 20px; font-weight: bold; cursor: pointer; touch-action: manipulation;">
-        ⚔️ READY FOR BATTLE
+        READY FOR BATTLE
       </button>
     </div>
   `;
@@ -79,13 +76,12 @@ export function renderCoachingScreen(
 
   readyBtn.addEventListener('click', () => {
     readyBtn.style.background = '#1e8449';
-    readyBtn.textContent = '✓ READY';
+    readyBtn.textContent = 'READY';
     readyBtn.disabled = true;
     socket.emit('coaching_ready', { roomId, playerId });
   });
 
-  // Listen for echo events
-  window.addEventListener('coaching-echo' as any, ((e: CustomEvent) => {
-    // Echo is already shown locally, but we could show agent responses here later
-  }) as EventListener);
+  socket.on('agent_coaching_message', (data: { content: string; timestamp: number }) => {
+    addMessage('agent', data.content);
+  });
 }

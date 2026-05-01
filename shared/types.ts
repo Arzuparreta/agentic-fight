@@ -1,24 +1,37 @@
-// Core game types shared across server and clients
-
 export interface Vec2 {
   x: number;
   y: number;
 }
 
 export interface StatusEffect {
-  id: string; // move that applied it
+  id: string;
   type: 'damage_reduction' | 'damage_boost' | 'cooldown_slow';
   value: number;
   remainingTicks: number;
 }
 
+export interface PlaystyleParameters {
+  aggressiveness: number;
+  risk_tolerance: number;
+  preferred_range: number;
+  patience: number;
+  defensiveness: number;
+  combo_preference: number;
+}
+
+export interface PlaystyleProfile {
+  narrative: string;
+  parameters: PlaystyleParameters;
+  directives: string[];
+}
+
 export interface AgentState {
   id: string;
   name: string;
-  position: number; // 1D arena position (x only)
+  position: Vec2;
   hp: number;
   maxHp: number;
-  stats: Stats; // per-agent stats (speed, damage, etc.) — modifiable by items
+  stats: Stats;
   cooldowns: Record<string, number>;
   moves: string[];
   statusEffects: StatusEffect[];
@@ -45,6 +58,12 @@ export interface Stats {
   maxHp: number;
 }
 
+export interface CoachingMessage {
+  sender: 'player' | 'agent';
+  content: string;
+  timestamp: number;
+}
+
 export interface RoomPlayer {
   id: string;
   socketId: string;
@@ -54,8 +73,9 @@ export interface RoomPlayer {
   stats: Stats;
   moves: string[];
   money: number;
-  coachingMessages: Message[];
-  playstyleMemory: string; // accumulated tactical mindset from coaching
+  coachingMessages: CoachingMessage[];
+  playstyleMemory: string;
+  playstyleProfile: PlaystyleProfile | null;
   ready: boolean;
 }
 
@@ -74,16 +94,16 @@ export interface Room {
   id: string;
   phase: 'lobby' | 'coaching' | 'simulating' | 'playback' | 'shop' | 'ended';
   players: Record<string, RoomPlayer>;
-  socketToPlayer: Record<string, string>; // socketId → playerId
+  socketToPlayer: Record<string, string>;
   currentRound: number;
   eventLog: SimEvent[];
   roundHistory: RoundResult[];
-  disconnects: Record<string, DisconnectState>; // playerId → disconnect info
+  disconnects: Record<string, DisconnectState>;
   economy: {
     money: Record<string, number>;
     consecutiveLosses: Record<string, number>;
   };
-  wins: Record<string, number>; // playerId → win count
+  wins: Record<string, number>;
 }
 
 export interface RoundResult {

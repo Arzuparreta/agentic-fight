@@ -1,4 +1,4 @@
-import { AgentState, GameState, SimEvent, getMoveDef, StatusEffect } from '@shared/index';
+import { AgentState, GameState, SimEvent, getMoveDef, StatusEffect, ARENA, AGENT_HITBOX_RADIUS } from '@shared/index';
 
 export interface AgentAction {
   action: string;
@@ -21,7 +21,7 @@ export function validateAction(
 
   const act = action.action;
 
-  if (act === 'idle' || act === 'move_left' || act === 'move_right') {
+  if (act === 'idle' || act === 'move_left' || act === 'move_right' || act === 'move_up' || act === 'move_down') {
     return { valid: true };
   }
 
@@ -35,7 +35,7 @@ export function validateAction(
 
   const def = getMoveDef(act);
   if (def && def.type === 'move' && def.range !== undefined && def.range > 0) {
-    const dist = Math.abs(agent.position - opponent.position);
+    const dist = euclideanDistance(agent.position, opponent.position);
     if (dist > def.range) {
       return { valid: false, error: `Opponent is out of range (${dist.toFixed(0)} units, need <= ${def.range}).` };
     }
@@ -44,10 +44,13 @@ export function validateAction(
   return { valid: true };
 }
 
-function calculateDamage(agent: AgentState, baseDamage: number): number {
-  let damage = baseDamage + agent.stats.attackDamage - 10; // base attackDamage is 10 baseline
+function euclideanDistance(a: { x: number; y: number }, b: { x: number; y: number }): number {
+  return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
+}
 
-  // Apply damage_boost status effects
+function calculateDamage(agent: AgentState, baseDamage: number): number {
+  let damage = baseDamage + agent.stats.attackDamage - 10;
+
   const damageBoost = agent.statusEffects
     .filter((se) => se.type === 'damage_boost')
     .reduce((sum, se) => sum + se.value, 0);
@@ -57,14 +60,13 @@ function calculateDamage(agent: AgentState, baseDamage: number): number {
 }
 
 function applyDamage(target: AgentState, rawDamage: number): number {
-  // Apply damage_reduction status effects
   const reduction = target.statusEffects
     .filter((se) => se.type === 'damage_reduction')
     .reduce((sum, se) => sum + se.value, 0);
 
   let damage = rawDamage;
   if (reduction > 0) {
-    damage = Math.floor(damage * (1 - Math.min(reduction, 0.9))); // cap at 90% reduction
+    damage = Math.floor(damage * (1 - Math.min(reduction, 0.9)));
   }
 
   target.hp = Math.max(0, target.hp - damage);
@@ -72,9 +74,6 @@ function applyDamage(target: AgentState, rawDamage: number): number {
 }
 
 function getCooldown(agent: AgentState, moveId: string, baseCooldown: number): number {
-  // Check if opponent has cooldown_slow on us
-  // Actually, cooldown_slow is a status effect on the TARGET that makes THEIR cooldowns longer
-  // But in our model, when agent A uses a move, agent B might have applied cooldown_slow to agent A
   const slow = agent.statusEffects
     .filter((se) => se.type === 'cooldown_slow')
     .reduce((sum, se) => sum + se.value, 0);
@@ -89,31 +88,57 @@ export function applyActions(
   const events: SimEvent[] = [];
   const agentIds = Object.keys(state.agents);
 
-  // Phase 1: Resolve movements simultaneously
   for (const id of agentIds) {
     const agent = state.agents[id];
     if (agent.status === 'dead') continue;
 
     const act = actions[id].action;
     const speed = agent.stats.movementSpeed;
+    const oldPos = { x: agent.position.x, y: agent.position.y };
+
     if (act === 'move_left') {
-      agent.position = Math.max(0, agent.position - speed);
-      events.push({ tick: state.tick, agentId: id, type: 'move', payload: { direction: 'left', newPosition: agent.position, speed } });
+      agent.position.x = Math.max(0, agent.position.x - speed);
     } else if (act === 'move_right') {
-      agent.position = Math.min(1000, agent.position + speed);
-      events.push({ tick: state.tick, agentId: id, type: 'move', payload: { direction: 'right', newPosition: agent.position, speed } });
+      agent.position.x = Math.min(ARENA.width, agent.position.x + speed);
+    } else if (act === 'move_up') {
+      agent.position.y = Math.max(0, agent.position.y - speed);
+    } else if (act === 'move_down') {
+      agent.position.y = Math.min(ARENA.height, agent.position.y + speed);
+    }
+
+    if (agent.position.x !== oldPos.x || agent.position.y !== oldPos.y) {
+      events.push({
+        tick: state.tick,
+        agentId: id,
+        type: 'move',
+        payload: {
+          newPosition: { x: agent.position.x, y: agent.position.y },
+          speed,
+        },
+      });
     }
   }
 
-  // Prevent agents from crossing each other (1D collision)
-  const [a, b] = Object.values(state.agents);
-  if (a.position > b.position) {
-    const midpoint = Math.floor((a.position + b.position) / 2);
-    a.position = midpoint;
-    b.position = midpoint;
+  const agents = Object.values(state.agents);
+  if (agents.length === 2 && agents[0].status === 'alive' && agents[1].status === 'alive') {
+    const [a, b] = agents;
+    const dx = b.position.x - a.position.x;
+    const dy = b.position.y - a.position.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const minDist = AGENT_HITBOX_RADIUS * 2;
+
+    if (dist < minDist && dist > 0) {
+      const overlap = minDist - dist;
+      const nx = dx / dist;
+      const ny = dy / dist;
+
+      a.position.x = Math.max(0, Math.round(a.position.x - nx * overlap * 0.5));
+      a.position.y = Math.max(0, Math.round(a.position.y - ny * overlap * 0.5));
+      b.position.x = Math.min(ARENA.width, Math.round(b.position.x + nx * overlap * 0.5));
+      b.position.y = Math.min(ARENA.height, Math.round(b.position.y + ny * overlap * 0.5));
+    }
   }
 
-  // Phase 2: Resolve attacks and special moves simultaneously
   for (const id of agentIds) {
     const agent = state.agents[id];
     const opponent = Object.values(state.agents).find((ag) => ag.id !== id)!;
@@ -124,9 +149,8 @@ export function applyActions(
 
     if (!def || def.type !== 'move') continue;
 
-    // Handle attack moves
     if (def.damage !== undefined && def.range !== undefined) {
-      const dist = Math.abs(agent.position - opponent.position);
+      const dist = euclideanDistance(agent.position, opponent.position);
       if (dist <= def.range) {
         const rawDamage = calculateDamage(agent, def.damage);
         const actualDamage = applyDamage(opponent, rawDamage);
@@ -152,11 +176,8 @@ export function applyActions(
       }
     }
 
-    // Handle status effect moves (shield_block, war_cry, inquisitor_curse)
     if (def.statusEffect && def.duration) {
-      const dist = Math.abs(agent.position - opponent.position);
-      // For self-buffs (shield_block, war_cry), range check is lenient (0 range = always valid if in any state)
-      // For debuffs (inquisitor_curse), check range
+      const dist = euclideanDistance(agent.position, opponent.position);
       const rangeValid = def.range === 0 || dist <= (def.range ?? 0);
 
       if (rangeValid) {
@@ -170,7 +191,6 @@ export function applyActions(
           remainingTicks: def.duration,
         };
 
-        // Self-buffs go on agent, debuffs go on opponent
         if (def.statusEffect.type === 'damage_reduction' || def.statusEffect.type === 'damage_boost') {
           agent.statusEffects.push(effect);
         } else if (def.statusEffect.type === 'cooldown_slow') {
@@ -187,7 +207,6 @@ export function applyActions(
     }
   }
 
-  // Idle logging
   for (const id of agentIds) {
     const act = actions[id].action;
     if (act === 'idle') {
