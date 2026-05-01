@@ -1,8 +1,6 @@
 # Agentic Fight — Local Setup Guide
 
-A multiplayer browser-based game where players coach AI agents via mobile chat to fight in a 2D side-view arena.
-
-**Theme:** Reyes Católicos Spain (late 15th century)
+A multiplayer browser-based game where players coach AI agents via mobile chat to fight in a 2D side-view arena. Themed on the spanish late 15th century.
 
 ---
 
