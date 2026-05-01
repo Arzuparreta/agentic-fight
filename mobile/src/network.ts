@@ -1,6 +1,6 @@
 import { io, Socket } from 'socket.io-client';
 import { renderPairingScreen } from './screens/pairing';
-import { renderCoachingScreen } from './screens/coaching';
+import { renderCoachingScreen, updateCoachingMessages } from './screens/coaching';
 import { renderShopScreen } from './screens/shop';
 import { renderWatchingScreen } from './screens/watching';
 
@@ -15,30 +15,33 @@ export function connectToServer() {
   socket = io(SERVER_URL);
 
   socket.on('connect', () => {
-    console.log('Mobile coach connected');
+    console.log('[Mobile] Connected to server');
   });
 
   socket.on('joined_room', (data: { roomId: string; playerId: string }) => {
     currentRoomId = data.roomId;
     currentPlayerId = data.playerId;
-    console.log(`Joined room ${data.roomId} as ${data.playerId}`);
+    console.log(`[Mobile] Joined room ${data.roomId} as ${data.playerId}`);
   });
 
   socket.on('reconnected', (data: { roomId: string; playerId: string }) => {
     currentRoomId = data.roomId;
     currentPlayerId = data.playerId;
-    console.log(`Reconnected to room ${data.roomId}`);
+    console.log(`[Mobile] Reconnected to room ${data.roomId}`);
   });
 
   socket.on('room_state', (room) => {
+    console.log(`[Mobile] room_state received: phase=${room.phase}, players=${Object.keys(room.players || {}).join(',')}`);
     handlePhaseChange(room.phase, room);
   });
 
   socket.on('agent_coaching_message', (data: { content: string; timestamp: number }) => {
+    console.log(`[Mobile] agent_coaching_message received: "${data.content?.slice(0, 40)}..."`);
     window.dispatchEvent(new CustomEvent('agent-coaching-message', { detail: data }));
   });
 
   socket.on('phase_change', (data: { newPhase: string }) => {
+    console.log(`[Mobile] phase_change received: ${data.newPhase}`);
     handlePhaseChange(data.newPhase);
   });
 
@@ -55,11 +58,12 @@ export function connectToServer() {
   });
 
   socket.on('error', (data: { message: string }) => {
+    console.error('[Mobile] Socket error:', data.message);
     alert(`Error: ${data.message}`);
   });
 
   socket.on('disconnect', () => {
-    console.log('Disconnected');
+    console.log('[Mobile] Disconnected');
     const app = document.getElementById('app')!;
     app.innerHTML = '<p style="text-align:center;padding:40px;">Disconnected. Refresh to reconnect.</p>';
   });
@@ -67,8 +71,31 @@ export function connectToServer() {
   return socket;
 }
 
-function handlePhaseChange(phase: string, room?: { players?: Record<string, { coachingMessages?: { sender: string; content: string }[] }> }) {
+interface RoomStatePlayer {
+  coachingMessages?: { sender: string; content: string; timestamp: number }[];
+  [key: string]: unknown;
+}
+
+interface RoomState {
+  phase: string;
+  players?: Record<string, RoomStatePlayer>;
+  [key: string]: unknown;
+}
+
+function handlePhaseChange(phase: string, room?: RoomState) {
   const app = document.getElementById('app')!;
+
+  if (phase === 'coaching' && currentPhase === 'coaching') {
+    if (room?.players?.[currentPlayerId]?.coachingMessages) {
+      const messages = room.players[currentPlayerId].coachingMessages!.map(m => ({
+        sender: m.sender as 'player' | 'agent',
+        content: m.content,
+      }));
+      console.log(`[Mobile] Updating coaching messages from room_state: ${messages.length} messages`);
+      updateCoachingMessages(messages);
+    }
+    return;
+  }
 
   if (phase === currentPhase) {
     return;
@@ -85,6 +112,7 @@ function handlePhaseChange(phase: string, room?: { players?: Record<string, { co
         sender: m.sender as 'player' | 'agent',
         content: m.content,
       })) || [];
+      console.log(`[Mobile] Rendering coaching screen with ${existingMessages.length} existing messages`);
       renderCoachingScreen(app, currentRoomId, currentPlayerId, socket, existingMessages);
       break;
     }

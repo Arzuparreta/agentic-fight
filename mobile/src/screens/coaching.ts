@@ -1,5 +1,7 @@
 import { Socket } from 'socket.io-client';
 
+let onNewMessages: ((messages: { sender: 'player' | 'agent'; content: string }[]) => void) | null = null;
+
 export function renderCoachingScreen(
   container: HTMLElement,
   roomId: string,
@@ -53,6 +55,7 @@ export function renderCoachingScreen(
     bubble.textContent = content;
     chatHistory.appendChild(bubble);
     chatHistory.scrollTop = chatHistory.scrollHeight;
+    console.log(`[Coaching] ${sender}: "${content.slice(0, 40)}..."`);
   }
 
   if (existingMessages && existingMessages.length > 0) {
@@ -60,6 +63,15 @@ export function renderCoachingScreen(
       addMessage(msg.sender, msg.content);
     }
   }
+
+  onNewMessages = (newMessages: { sender: 'player' | 'agent'; content: string }[]) => {
+    const unseen = newMessages.filter(
+      (m) => !messages.some((existing) => existing.sender === m.sender && existing.content === m.content)
+    );
+    for (const msg of unseen) {
+      addMessage(msg.sender, msg.content);
+    }
+  };
 
   function sendMessage() {
     const content = input.value.trim();
@@ -90,8 +102,18 @@ export function renderCoachingScreen(
 
   const agentMessageHandler = ((e: CustomEvent) => {
     const data = e.detail as { content: string };
+    console.log(`[Coaching] Received agent-coaching-message event: "${data.content?.slice(0, 40)}..."`);
     addMessage('agent', data.content);
   }) as EventListener;
 
   window.addEventListener('agent-coaching-message', agentMessageHandler);
+}
+
+export function updateCoachingMessages(newMessages: { sender: 'player' | 'agent'; content: string }[]) {
+  if (onNewMessages) {
+    console.log(`[Coaching] updateCoachingMessages called with ${newMessages.length} messages`);
+    onNewMessages(newMessages);
+  } else {
+    console.warn('[Coaching] updateCoachingMessages called but no handler registered');
+  }
 }
