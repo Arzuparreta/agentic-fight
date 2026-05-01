@@ -14,7 +14,7 @@ export const DODGE_COOLDOWN = 50;
 export const DODGE_INVINCIBILITY_TICKS = 6;
 export const DIAGONAL_SPEED_FACTOR = Math.SQRT1_2;
 
-export const PLAN_INTERVAL = 15;
+export const PLAN_INTERVAL = 40;
 
 export const TICK_DURATION_MS = 1000 / TICK_RATE;
 

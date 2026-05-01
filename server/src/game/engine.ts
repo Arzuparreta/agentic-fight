@@ -92,18 +92,18 @@ interface AgentRuntime {
 
 function createDefaultPlan(aggressionLevel: number = 50): TacticalPlan {
   return {
-    strategy: 'Adapt to the situation.',
+    strategy: 'Closing distance and attacking.',
     movementPattern: 'approach_direct',
     primaryMove: 'basic_attack',
-    dodgeFrequency: 30,
+    dodgeFrequency: 20,
     aggressionLevel,
     reactions: {
-      ifOpponentShields: 'wait',
-      ifOpponentRetreats: 'hold',
-      ifLowHP: 'retreat',
+      ifOpponentShields: 'use_ranged',
+      ifOpponentRetreats: 'rush',
+      ifLowHP: 'berserk',
       ifOpponentUsesRanged: 'dodge_close',
     },
-    reasoning: 'Default tactical plan.',
+    reasoning: 'Default plan: approach and attack.',
   };
 }
 

@@ -195,18 +195,18 @@ Respond with exactly one JSON object:
 
 function validateTacticalPlan(parsed: any): TacticalPlan {
   const defaultPlan: TacticalPlan = {
-    strategy: 'Adapting to the situation.',
+    strategy: 'Closing distance and attacking.',
     movementPattern: 'approach_direct',
     primaryMove: 'basic_attack',
-    dodgeFrequency: 30,
+    dodgeFrequency: 20,
     aggressionLevel: 50,
     reactions: {
-      ifOpponentShields: 'wait',
-      ifOpponentRetreats: 'hold',
-      ifLowHP: 'retreat',
+      ifOpponentShields: 'use_ranged',
+      ifOpponentRetreats: 'rush',
+      ifLowHP: 'berserk',
       ifOpponentUsesRanged: 'dodge_close',
     },
-    reasoning: 'Default plan.',
+    reasoning: 'Default plan: approach and attack.',
   };
 
   if (!parsed) return defaultPlan;
@@ -308,12 +308,12 @@ export async function getTacticalPlan(
       strategy: 'Default strategy due to LLM error.',
       movementPattern: 'approach_direct',
       primaryMove: 'basic_attack',
-      dodgeFrequency: 30,
+      dodgeFrequency: 20,
       aggressionLevel: 50,
       reactions: {
-        ifOpponentShields: 'wait',
-        ifOpponentRetreats: 'hold',
-        ifLowHP: 'retreat',
+        ifOpponentShields: 'use_ranged',
+        ifOpponentRetreats: 'rush',
+        ifLowHP: 'berserk',
         ifOpponentUsesRanged: 'dodge_close',
       },
       reasoning: 'LLM call failed, defaulting to basic approach.',

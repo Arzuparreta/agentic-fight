@@ -146,13 +146,11 @@ function getBestAvailableAttack(ctx: BehaviorContext): string | null {
 }
 
 function shouldDodge(ctx: BehaviorContext): { dodge: boolean; direction?: string } {
-  const { agent, opponent, distance, tick, plan, tendencies, history } = ctx;
+  const { agent, opponent, distance, plan, tendencies } = ctx;
 
   if (agent.dodgeCooldown > 0) return { dodge: false };
-  if (plan.dodgeFrequency < 10) return { dodge: false };
+  if (plan.dodgeFrequency < 30) return { dodge: false };
 
-  const oppCooldown = opponent.cooldowns;
-  const oppBasicAttack = oppCooldown['basic_attack'] ?? 0;
   const oppMoves = [...Object.keys(opponent.cooldowns), ...opponent.moves].filter(
     (m, i, arr) => arr.indexOf(m) === i
   );
@@ -163,8 +161,8 @@ function shouldDodge(ctx: BehaviorContext): { dodge: boolean; direction?: string
     if (!def.range) continue;
 
     const cd = opponent.cooldowns[moveId] ?? 0;
-    if (cd <= 3 && cd >= 0 && distance <= def.range * 1.3) {
-      const dodgeChance = plan.dodgeFrequency / 100;
+    if (cd <= 2 && distance <= def.range * 1.3) {
+      const dodgeChance = (plan.dodgeFrequency / 100) * 0.3;
       if (Math.random() < dodgeChance) {
         const dx = agent.position.x - opponent.position.x;
         const dy = agent.position.y - opponent.position.y;
@@ -179,27 +177,6 @@ function shouldDodge(ctx: BehaviorContext): { dodge: boolean; direction?: string
           return { dodge: true, direction: perpDir };
         }
       }
-    }
-  }
-
-  if (distance < 100 && plan.dodgeFrequency > 50 && Math.random() < (plan.dodgeFrequency / 200)) {
-    const recentMoves = history.slice(-5);
-    const opponentMoves = ctx.opponentHistory.slice(-3);
-    const opponentAttacking = opponentMoves.some(
-      (h) => !h.action.startsWith('move_') && h.action !== 'idle' && !h.action.startsWith('dodge_')
-    );
-
-    if (opponentAttacking) {
-      const angle = angleBetween(opponent.position, agent.position);
-      const dodgeAngles = [
-        angle + Math.PI / 4,
-        angle - Math.PI / 4,
-        angle + Math.PI / 3,
-        angle - Math.PI / 3,
-      ];
-      const chosen = dodgeAngles[Math.floor(Math.random() * dodgeAngles.length)];
-      const dir = angleToDodgeDirection(chosen);
-      return { dodge: true, direction: dir };
     }
   }
 
@@ -263,9 +240,17 @@ function performMovement(ctx: BehaviorContext): { action: string; reasoning: str
       const justAttacked = recentActions.some(
         (a) => a !== 'idle' && !a.startsWith('move_') && !a.startsWith('dodge_')
       );
-      const retreatingRecently = recentActions.every(
-        (a) => a.startsWith('move_') || a === 'idle'
-      );
+      const retreatingRecently = recentActions.length >= 2 &&
+        recentActions.every((a) => a.startsWith('move_') || a === 'idle');
+      const basicDef = getMoveDef('basic_attack');
+
+      if (justAttacked && distance < idealDistance + tolerance && basicDef && basicDef.range && distance <= basicDef.range) {
+        // Stay close and attack again if possible
+        const attack = getBestAvailableAttack(ctx);
+        if (attack) {
+          return { action: attack, reasoning: 'Hit-and-retreat: attacking again' };
+        }
+      }
 
       if (justAttacked && distance < idealDistance + tolerance) {
         const retreatAngle = angle + Math.PI;
@@ -280,7 +265,7 @@ function performMovement(ctx: BehaviorContext): { action: string; reasoning: str
         return angleToMovement(angle, agent, 'Closing for hit-and-retreat');
       }
 
-      return angleToMovement(angle, agent, 'In range, holding');
+      return { action: 'idle', reasoning: 'In range, waiting for cooldown' };
     }
 
     case 'dodge_and_counter': {
@@ -296,6 +281,10 @@ function performMovement(ctx: BehaviorContext): { action: string; reasoning: str
       if (distance < idealDistance - tolerance * 0.3) {
         const retreatAngle = angle + Math.PI + 0.3;
         return angleToMovement(retreatAngle, agent, 'Slightly retreating to ideal range');
+      }
+
+      if (distance > 150) {
+        return angleToMovement(angle, agent, 'Closing distance for counter');
       }
 
       return { action: 'idle', reasoning: 'Waiting for opponent to commit' };
@@ -316,13 +305,19 @@ function performMovement(ctx: BehaviorContext): { action: string; reasoning: str
     }
 
     case 'kite': {
+      if (distance < idealDistance - tolerance && distance < 100) {
+        const retreatAngle = angle + Math.PI;
+        const jitterAngle = retreatAngle + (Math.random() - 0.5) * 0.5;
+        return angleToMovement(jitterAngle, agent, 'Kiting: creating distance');
+      }
+
       const rangedMoves = getAvailableCombatMoves(agent).filter((m) => {
         const def = getMoveDef(m);
         return def && def.range && def.range >= 200;
       });
 
-      if (rangedMoves.length > 0 && distance <= (getMoveDef(rangedMoves[0])?.range ?? 300)) {
-        const attack = rangedMoves.find((m) => isMoveOffCooldown(agent, m)) || null;
+      if (rangedMoves.length > 0) {
+        const attack = rangedMoves.find((m) => isMoveOffCooldown(agent, m) && distance <= (getMoveDef(m)?.range ?? 300));
         if (attack) {
           return { action: attack, reasoning: 'Kiting with ranged attack' };
         }
@@ -339,7 +334,10 @@ function performMovement(ctx: BehaviorContext): { action: string; reasoning: str
     }
 
     case 'hold_position': {
-      return { action: 'idle', reasoning: 'Holding position' };
+      if (distance > 120) {
+        return angleToMovement(angle, agent, 'Holding position but closing gap');
+      }
+      return { action: 'idle', reasoning: 'Holding position in range' };
     }
 
     case 'feint_approach': {
@@ -348,6 +346,10 @@ function performMovement(ctx: BehaviorContext): { action: string; reasoning: str
       if (feintPhase) {
         if (distance > idealDistance + tolerance) {
           return angleToMovement(angle, agent, 'Feint: approaching confidently');
+        }
+        // When close, don't just idle — close remaining distance
+        if (distance > 60) {
+          return angleToMovement(angle, agent, 'Feint: closing in');
         }
         return { action: 'idle', reasoning: 'Feint: pausing before dodge' };
       } else {
@@ -433,30 +435,39 @@ function checkReactions(ctx: BehaviorContext): string | null {
   const { opponent, opponentHistory, plan, distance } = ctx;
   const recentOppActions = opponentHistory.slice(-5).map((h) => h.action);
 
+  // Only check reactions when NOT in attack range — attacks take priority
+  if (distance <= 100) {
+    return null;
+  }
+
   const opponentHasShield = opponent.statusEffects.some(
     (se) => se.type === 'damage_reduction' && se.remainingTicks > 5
   );
   if (opponentHasShield) {
     const reaction = plan.reactions.ifOpponentShields;
-    return mapReactionToAction(reaction, ctx, distance);
+    const action = mapReactionToAction(reaction, ctx, distance);
+    if (action) return action;
   }
 
-  const opponentRetreating = recentOppActions.length >= 2 &&
-    recentOppActions.slice(-2).every((a) => a === 'move_left' || a === 'move_right' || a === 'move_up' || a === 'move_down');
+  const opponentRetreating = recentOppActions.length >= 3 &&
+    recentOppActions.slice(-3).every((a) => a.startsWith('move_') && !a.startsWith('move_up') && !a.startsWith('move_down') || a === 'idle');
   if (opponentRetreating) {
     const reaction = plan.reactions.ifOpponentRetreats;
-    return mapReactionToAction(reaction, ctx, distance);
+    const action = mapReactionToAction(reaction, ctx, distance);
+    if (action && action !== 'idle') return action;
   }
 
   if (ctx.hpRatio < 0.25) {
     const reaction = plan.reactions.ifLowHP;
-    return mapReactionToAction(reaction, ctx, distance);
+    const action = mapReactionToAction(reaction, ctx, distance);
+    if (action) return action;
   }
 
   const opponentRanged = recentOppActions.some((a) => a === 'crossbow');
   if (opponentRanged) {
     const reaction = plan.reactions.ifOpponentUsesRanged;
-    return mapReactionToAction(reaction, ctx, distance);
+    const action = mapReactionToAction(reaction, ctx, distance);
+    if (action) return action;
   }
 
   return null;
@@ -597,46 +608,7 @@ function tryCombo(ctx: BehaviorContext): string | null {
 export function chooseAction(ctx: BehaviorContext): { action: string; reasoning: string } {
   const { agent, opponent, distance, plan, hpRatio, opponentHpRatio } = ctx;
 
-  const reaction = checkReactions(ctx);
-  if (reaction) {
-    return { action: reaction, reasoning: 'Reacting to opponent behavior' };
-  }
-
-  const dodgeResult = shouldDodge(ctx);
-  if (dodgeResult.dodge && dodgeResult.direction) {
-    return { action: dodgeResult.direction, reasoning: 'Dodging predicted attack' };
-  }
-
-  const comboMove = tryCombo(ctx);
-  if (comboMove) {
-    return { action: comboMove, reasoning: 'Executing combo sequence' };
-  }
-
-  if (plan.primaryMove && plan.primaryMove !== 'basic_attack' && plan.primaryMove !== 'idle') {
-    const primaryDef = getMoveDef(plan.primaryMove);
-    if (primaryDef && isMoveOffCooldown(agent, plan.primaryMove)) {
-      const inRange = !primaryDef.range || distance <= primaryDef.range;
-      if (inRange) {
-        return { action: plan.primaryMove, reasoning: `Using primary move: ${plan.primaryMove}` };
-      }
-    }
-  }
-
-  if (agent.statusEffects.some((se) => se.type === 'damage_boost' && se.remainingTicks > 3)) {
-    const bestAttack = getBestAvailableAttack(ctx);
-    if (bestAttack) {
-      return { action: bestAttack, reasoning: 'Attacking with damage boost active' };
-    }
-  }
-
-  const defenseMoves = getAvailableDefenseMoves(agent);
-  if (defenseMoves.length > 0 && hpRatio < 0.6) {
-    const defense = defenseMoves.find((m) => isMoveOffCooldown(agent, m));
-    if (defense && distance < 150 && plan.aggressionLevel < 70) {
-      return { action: defense, reasoning: 'Raising defenses at moderate HP' };
-    }
-  }
-
+  // ALWAYS check for attacks first — if we can hit, we should hit
   const bestAttack = getBestAvailableAttack(ctx);
   if (bestAttack) {
     return { action: bestAttack, reasoning: `Attacking with ${bestAttack}` };
@@ -649,10 +621,67 @@ export function chooseAction(ctx: BehaviorContext): { action: string; reasoning:
     }
   }
 
-  if (distance <= 100 && bestAttack === null) {
+  // Use damage boost if available and we're in attack range
+  if (agent.statusEffects.some((se) => se.type === 'damage_boost' && se.remainingTicks > 3)) {
+    // Already have damage boost active — try to attack (already checked above)
+    // If no attack in range, keep moving toward opponent
+  }
+
+  // Use defensive buff if HP is low
+  const defenseMoves = getAvailableDefenseMoves(agent);
+  if (defenseMoves.length > 0 && hpRatio < 0.5 && distance < 200) {
+    const defense = defenseMoves.find((m) => isMoveOffCooldown(agent, m));
+    if (defense && plan.aggressionLevel < 70) {
+      return { action: defense, reasoning: 'Raising defenses at low HP' };
+    }
+  }
+
+  // Check reactions (only if not in immediate attack range)
+  if (distance > 120) {
+    const reaction = checkReactions(ctx);
+    if (reaction) {
+      return { action: reaction, reasoning: 'Reacting to opponent behavior' };
+    }
+  }
+
+  // Dodge prediction (only if dodge frequency is meaningful)
+  const dodgeResult = shouldDodge(ctx);
+  if (dodgeResult.dodge && dodgeResult.direction) {
+    return { action: dodgeResult.direction, reasoning: 'Dodging predicted attack' };
+  }
+
+  // Combo execution
+  const comboMove = tryCombo(ctx);
+  if (comboMove) {
+    return { action: comboMove, reasoning: 'Executing combo sequence' };
+  }
+
+  // Primary move if available and in range
+  if (plan.primaryMove && plan.primaryMove !== 'basic_attack' && plan.primaryMove !== 'idle') {
+    const primaryDef = getMoveDef(plan.primaryMove);
+    if (primaryDef && isMoveOffCooldown(agent, plan.primaryMove)) {
+      const inRange = !primaryDef.range || distance <= primaryDef.range;
+      if (inRange) {
+        return { action: plan.primaryMove, reasoning: `Using primary move: ${plan.primaryMove}` };
+      }
+    }
+  }
+
+  // Buff before engaging (combo preference)
+  const buffMoves = getAvailableBuffMoves(agent);
+  if (plan.aggressionLevel > 60 && buffMoves.length > 0 && distance < 200) {
+    const buff = buffMoves.find((m) => isMoveOffCooldown(agent, m));
+    if (buff && !agent.statusEffects.some((se) => se.type === 'damage_boost' && se.remainingTicks > 10)) {
+      return { action: buff, reasoning: 'Buffing before engaging' };
+    }
+  }
+
+  // If very close and all attacks on cooldown, idle briefly
+  if (distance <= 100 && bestAttack === null && !isMoveOffCooldown(agent, 'basic_attack')) {
     return { action: 'idle', reasoning: 'In range, waiting for cooldowns' };
   }
 
+  // Movement-based action
   return performMovement(ctx);
 }
 
