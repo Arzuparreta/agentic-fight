@@ -28,15 +28,15 @@ export function registerHandlers(io, roomManager) {
                     }
                     console.log(`[WS] Coaching conversation complete for room ${result.room.id}, sending agent messages`);
                     for (const [playerId, message] of Object.entries(coachingResult.agentMessages)) {
-                        const player = coachingResult.room.players[playerId];
-                        if (player) {
-                            io.to(player.socketId).emit('agent_coaching_message', {
-                                content: message,
-                                timestamp: Date.now(),
-                            });
-                        }
+                        console.log(`[WS] Broadcasting opening message for ${playerId}: "${message.slice(0, 40)}..."`);
+                        io.to(result.room.id).emit('agent_coaching_message', {
+                            playerId,
+                            content: message,
+                            timestamp: Date.now(),
+                        });
                     }
                     // Re-emit room_state so clients see the updated coachingMessages
+                    console.log(`[WS] Re-emitting room_state for room ${result.room.id}`);
                     io.to(result.room.id).emit('room_state', roomManager.getPublicRoomState(result.room.id));
                 }).catch((err) => {
                     console.error('[WS] Coaching conversation error:', err);
@@ -64,11 +64,13 @@ export function registerHandlers(io, roomManager) {
                 }
                 const player = result.room.players[data.playerId];
                 if (player) {
-                    io.to(player.socketId).emit('agent_coaching_message', {
+                    console.log(`[WS] Broadcasting agent response for ${data.playerId}`);
+                    io.to(result.room.id).emit('agent_coaching_message', {
+                        playerId: data.playerId,
                         content: result.agentResponse,
                         timestamp: Date.now(),
                     });
-                    console.log(`[WS] Agent response sent to ${data.playerId}`);
+                    console.log(`[WS] Agent response broadcast for ${data.playerId}`);
                 }
             }
             catch (err) {
@@ -144,13 +146,12 @@ export function registerHandlers(io, roomManager) {
                     }
                     console.log(`[WS] Coaching conversation complete for room ${result.room.id}, sending agent messages`);
                     for (const [playerId, message] of Object.entries(coachingResult.agentMessages)) {
-                        const player = coachingResult.room.players[playerId];
-                        if (player) {
-                            io.to(player.socketId).emit('agent_coaching_message', {
-                                content: message,
-                                timestamp: Date.now(),
-                            });
-                        }
+                        console.log(`[WS] Broadcasting opening message (shop) for ${playerId}: "${message.slice(0, 40)}..."`);
+                        io.to(result.room.id).emit('agent_coaching_message', {
+                            playerId,
+                            content: message,
+                            timestamp: Date.now(),
+                        });
                     }
                     io.to(result.room.id).emit('room_state', roomManager.getPublicRoomState(result.room.id));
                 }).catch((err) => {

@@ -11,6 +11,11 @@ export function createInitialState(agentA, agentB) {
         moves: agentA.moves,
         statusEffects: [],
         status: 'alive',
+        dodgeCooldown: 0,
+        invincibleUntilTick: 0,
+        isDodging: false,
+        dodgeDirection: null,
+        facingAngle: 0,
     };
     const b = {
         id: agentB.id,
@@ -23,6 +28,11 @@ export function createInitialState(agentA, agentB) {
         moves: agentB.moves,
         statusEffects: [],
         status: 'alive',
+        dodgeCooldown: 0,
+        invincibleUntilTick: 0,
+        isDodging: false,
+        dodgeDirection: null,
+        facingAngle: Math.PI,
     };
     return {
         tick: 0,
@@ -43,6 +53,11 @@ export function advanceCooldowns(state) {
                 agent.cooldowns[key]--;
             }
         }
+        if (agent.dodgeCooldown > 0) {
+            agent.dodgeCooldown--;
+        }
+        agent.isDodging = false;
+        agent.dodgeDirection = null;
         agent.statusEffects = agent.statusEffects.filter((se) => {
             se.remainingTicks--;
             return se.remainingTicks > 0;

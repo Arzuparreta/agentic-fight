@@ -1,8 +1,10 @@
 // Benchmark Gemma 4 with our exact combat prompt
-const OLLAMA_URL = 'http://localhost:11434';
-const MODEL = 'gemma4:latest';
+export {}
 
-const TEST_PROMPT = `You are Don Rodrigo, a proud Castilian knight.
+const BENCH_OLLAMA_URL = 'http://localhost:11434';
+const BENCH_MODEL = 'gemma4:latest';
+
+const BENCH_TEST_PROMPT = `You are Don Rodrigo, a proud Castilian knight.
 How you currently think about fighting: I rush the opponent and strike without hesitation.
 
 Current situation (tick 47 of 600):
@@ -15,37 +17,38 @@ Respond with exactly one JSON object: { "action": "...", "reasoning": "..." }
 Valid actions: move_left, move_right, basic_attack, idle
 The reasoning should explain your tactical thinking in one short sentence.`;
 
+const BENCH_ITERATIONS = 10;
+
 async function benchmark() {
   console.log('=== Ollama Benchmark ===');
-  console.log(`Model: ${MODEL}`);
-  console.log(`URL: ${OLLAMA_URL}\n`);
+  console.log(`Model: ${BENCH_MODEL}`);
+  console.log(`URL: ${BENCH_OLLAMA_URL}\n`);
 
   // Warm-up call
   console.log('Warming up...');
-  await fetch(`${OLLAMA_URL}/api/generate`, {
+  await fetch(`${BENCH_OLLAMA_URL}/api/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: MODEL,
-      prompt: TEST_PROMPT,
+      model: BENCH_MODEL,
+      prompt: BENCH_TEST_PROMPT,
       stream: false,
       format: 'json',
     }),
   });
 
-  const ITERATIONS = 10;
   const times: number[] = [];
 
-  console.log(`Running ${ITERATIONS} iterations...\n`);
+  console.log(`Running ${BENCH_ITERATIONS} iterations...\n`);
 
-  for (let i = 0; i < ITERATIONS; i++) {
+  for (let i = 0; i < BENCH_ITERATIONS; i++) {
     const start = performance.now();
-    const res = await fetch(`${OLLAMA_URL}/api/generate`, {
+    const res = await fetch(`${BENCH_OLLAMA_URL}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: MODEL,
-        prompt: TEST_PROMPT,
+        model: BENCH_MODEL,
+        prompt: BENCH_TEST_PROMPT,
         stream: false,
         format: 'json',
       }),

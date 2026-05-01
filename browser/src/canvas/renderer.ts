@@ -83,7 +83,8 @@ export class Renderer {
       const agent = this.agents.get(ev.agentId);
 
       switch (ev.type) {
-        case 'move': {
+        case 'move':
+        case 'move_diagonal': {
           if (agent) {
             const newPos = ev.payload.newPosition as Vec2 | undefined;
             if (newPos) {
@@ -94,6 +95,22 @@ export class Renderer {
               agent.flipH = agent.targetPosition.x > other.targetPosition.x;
             }
             this.audio.playMove();
+          }
+          break;
+        }
+        case 'dodge': {
+          if (agent) {
+            const newPos = ev.payload.newPosition as Vec2 | undefined;
+            if (newPos) {
+              agent.targetPosition = { ...newPos };
+            }
+            const other = this.getOtherAgent(agent.id);
+            if (other) {
+              agent.flipH = agent.targetPosition.x > other.targetPosition.x;
+            }
+            agent.flashTime = 8;
+            agent.popupText = 'Dodge!';
+            agent.popupTimer = 15;
           }
           break;
         }
@@ -109,9 +126,15 @@ export class Renderer {
         }
         case 'hit': {
           if (agent) {
-            agent.hp = (ev.payload.hpRemaining as number) ?? agent.hp;
-            agent.flashTime = 10;
-            this.audio.playHit();
+            const dodged = ev.payload.dodged as boolean | undefined;
+            if (dodged) {
+              agent.popupText = 'Dodged!';
+              agent.popupTimer = 20;
+            } else {
+              agent.hp = (ev.payload.hpRemaining as number) ?? agent.hp;
+              agent.flashTime = 10;
+              this.audio.playHit();
+            }
           }
           break;
         }
@@ -131,6 +154,8 @@ export class Renderer {
           }
           break;
         }
+        case 'idle':
+          break;
       }
     }
   }

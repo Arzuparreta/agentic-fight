@@ -2,7 +2,7 @@ import { STARTING_MONEY } from '@shared/index';
 import { simulateRound } from '../game/engine';
 import { calculateEarnings } from '../game/economy';
 import { purchaseItem } from '../game/shop';
-import { synthesizePlaystyle, generateAgentOpeningMessage, generateAgentResponse } from '../llm/ollama';
+import { synthesizePlaystyle, generateAgentOpeningMessage, generateAgentResponse, generateRoundSummary } from '../llm/ollama';
 import { MOVE_CATALOG } from '@shared/index';
 const RECONNECT_TIMEOUT_MS = 10000;
 const ROUNDS_TO_WIN = 3;
@@ -28,6 +28,7 @@ function createRoomPlayer(socketId, role, agentName, characterDescription) {
         playstyleMemory: '',
         playstyleProfile: null,
         ready: false,
+        roundSummaries: [],
     };
 }
 function buildCoachingContext(player, room) {
@@ -298,6 +299,18 @@ export class RoomManager {
         room.economy = newEconomy;
         for (const mobile of mobiles) {
             mobile.money = room.economy.money[mobile.id] || 0;
+        }
+        // Generate round summaries for each agent (Phase 5)
+        try {
+            const summaryA = await generateRoundSummary(pA.agentName, pA.characterDescription, simResult.eventLog, winnerId === pA.id, pA.id, pB.id);
+            const summaryB = await generateRoundSummary(pB.agentName, pB.characterDescription, simResult.eventLog, winnerId === pB.id, pB.id, pA.id);
+            summaryA.roundNumber = room.currentRound;
+            summaryB.roundNumber = room.currentRound;
+            pA.roundSummaries.push(summaryA);
+            pB.roundSummaries.push(summaryB);
+        }
+        catch (err) {
+            console.error(`[Room ${roomId}] Error generating round summaries:`, err);
         }
         room.roundHistory.push(roundResult);
         room.phase = 'playback';

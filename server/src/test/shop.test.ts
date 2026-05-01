@@ -5,8 +5,10 @@ import { calculateEarnings, EconomyState } from '../game/economy';
 function createTestPlayer(id: string, money: number, moves: string[] = [], stats?: Partial<Stats>): RoomPlayer {
   return {
     id,
+    socketId: id + '-socket',
     role: 'mobile',
     agentName: id,
+    characterDescription: 'a test fighter',
     stats: { maxHp: 150, movementSpeed: 3, attackDamage: 8, ...stats },
     moves,
     money,
@@ -14,6 +16,7 @@ function createTestPlayer(id: string, money: number, moves: string[] = [], stats
     playstyleMemory: '',
     playstyleProfile: null,
     ready: false,
+    roundSummaries: [],
   };
 }
 

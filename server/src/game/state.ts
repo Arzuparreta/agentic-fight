@@ -31,6 +31,11 @@ export function createInitialState(agentA: AgentConfig, agentB: AgentConfig): Ga
     moves: agentA.moves,
     statusEffects: [],
     status: 'alive',
+    dodgeCooldown: 0,
+    invincibleUntilTick: 0,
+    isDodging: false,
+    dodgeDirection: null,
+    facingAngle: 0,
   };
 
   const b: AgentState = {
@@ -44,6 +49,11 @@ export function createInitialState(agentA: AgentConfig, agentB: AgentConfig): Ga
     moves: agentB.moves,
     statusEffects: [],
     status: 'alive',
+    dodgeCooldown: 0,
+    invincibleUntilTick: 0,
+    isDodging: false,
+    dodgeDirection: null,
+    facingAngle: Math.PI,
   };
 
   return {
@@ -67,6 +77,11 @@ export function advanceCooldowns(state: GameState): void {
         agent.cooldowns[key]--;
       }
     }
+    if (agent.dodgeCooldown > 0) {
+      agent.dodgeCooldown--;
+    }
+    agent.isDodging = false;
+    agent.dodgeDirection = null;
     agent.statusEffects = agent.statusEffects.filter((se) => {
       se.remainingTicks--;
       return se.remainingTicks > 0;

@@ -1,12 +1,17 @@
-import { GameState, SimEvent, AgentState } from '@shared/index';
+import { GameState, SimEvent, AgentState, TacticalPlan, ActionHistoryEntry, RoundSummary } from '@shared/index';
 import { AgentConfig } from './state';
 import { AgentAction } from './actions';
-import { AgentPlan } from '../llm/ollama';
 export interface LLMClient {
     getAction: (agent: AgentState, opponent: AgentState, state: GameState, playstyleMemory: string, characterDescription: string, errorContext?: string) => Promise<AgentAction>;
 }
 export interface PlanClient {
     getPlan: (agent: AgentState, opponent: AgentState, state: GameState, playstyleMemory: string, characterDescription: string, errorContext?: string) => Promise<AgentPlan>;
+    getTacticalPlan?: (agent: AgentState, opponent: AgentState, state: GameState, playstyleMemory: string, characterDescription: string, actionHistory: ActionHistoryEntry[], opponentHistory: ActionHistoryEntry[], roundSummaries: RoundSummary[]) => Promise<TacticalPlan>;
+}
+export interface AgentPlan {
+    plan: 'approach' | 'retreat' | 'attack' | 'defend' | 'idle';
+    preferredMove: string;
+    reasoning: string;
 }
 export interface SimulationResult {
     eventLog: SimEvent[];
@@ -18,5 +23,5 @@ export interface SimulationResult {
     winnerId: string | null;
     finalTick: number;
 }
-export declare function simulateRound(agentA: AgentConfig, agentB: AgentConfig, planClient?: PlanClient): Promise<SimulationResult>;
+export declare function simulateRound(agentA: AgentConfig, agentB: AgentConfig, planClient?: any): Promise<SimulationResult>;
 //# sourceMappingURL=engine.d.ts.map

@@ -3,8 +3,10 @@ import { calculateEarnings } from '../game/economy';
 function createTestPlayer(id, money, moves = [], stats) {
     return {
         id,
+        socketId: id + '-socket',
         role: 'mobile',
         agentName: id,
+        characterDescription: 'a test fighter',
         stats: { maxHp: 150, movementSpeed: 3, attackDamage: 8, ...stats },
         moves,
         money,
@@ -12,6 +14,7 @@ function createTestPlayer(id, money, moves = [], stats) {
         playstyleMemory: '',
         playstyleProfile: null,
         ready: false,
+        roundSummaries: [],
     };
 }
 function runTests() {

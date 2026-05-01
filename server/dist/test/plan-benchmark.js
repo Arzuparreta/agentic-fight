@@ -1,7 +1,9 @@
 import { simulateRound } from '../game/engine';
 const dummyPlanClient = {
     getPlan: async (agent, opponent) => {
-        const dist = Math.abs(agent.position - opponent.position);
+        const dx = agent.position.x - opponent.position.x;
+        const dy = agent.position.y - opponent.position.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
         const onCooldown = (agent.cooldowns['basic_attack'] ?? 0) > 0;
         if (dist <= 80 && !onCooldown) {
             return { plan: 'attack', preferredMove: 'basic_attack', reasoning: 'In range!' };

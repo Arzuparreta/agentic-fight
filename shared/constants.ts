@@ -9,6 +9,13 @@ export const BASIC_ATTACK_RANGE = 80;
 export const BASIC_ATTACK_COOLDOWN = 20;
 export const MOVEMENT_SPEED = 3;
 
+export const DODGE_DISTANCE = 80;
+export const DODGE_COOLDOWN = 50;
+export const DODGE_INVINCIBILITY_TICKS = 6;
+export const DIAGONAL_SPEED_FACTOR = Math.SQRT1_2;
+
+export const PLAN_INTERVAL = 15;
+
 export const TICK_DURATION_MS = 1000 / TICK_RATE;
 
 export const WINNER_EARNINGS = 3000;
