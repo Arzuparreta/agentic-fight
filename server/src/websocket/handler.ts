@@ -27,24 +27,16 @@ export function registerHandlers(io: Server, roomManager: RoomManager) {
       }
 
       socket.join(result.room.id);
+      socket.emit('joined_room', { roomId: result.room.id, playerId: result.player.id });
       console.log(`[WS] ${data.role} joined room ${result.room.id}: ${result.player.id}`);
 
       if (result.room.phase === 'coaching') {
         const coachingResult = await roomManager.startCoachingConversation(result.room.id);
-        if (!('error' in coachingResult)) {
-          const player = result.room.players[result.player.id];
-          const coachingMessages = player?.coachingMessages || [];
-          socket.emit('joined_room', {
-            roomId: result.room.id,
-            playerId: result.player.id,
-            coachingMessages,
-          });
-          io.to(result.room.id).emit('room_state', roomManager.getPublicRoomState(result.room.id));
+        if ('error' in coachingResult) {
+          console.error('[WS] Coaching conversation failed:', coachingResult.error);
         }
-      } else {
-        socket.emit('joined_room', { roomId: result.room.id, playerId: result.player.id });
-        io.to(result.room.id).emit('room_state', roomManager.getPublicRoomState(result.room.id));
       }
+      io.to(result.room.id).emit('room_state', roomManager.getPublicRoomState(result.room.id));
     });
 
     socket.on('reconnect', (data: { roomId: string; oldPlayerId: string }) => {
@@ -55,19 +47,7 @@ export function registerHandlers(io: Server, roomManager: RoomManager) {
       }
 
       socket.join(result.room.id);
-
-      if (result.room.phase === 'coaching') {
-        const player = result.room.players[result.player.id];
-        const coachingMessages = player?.coachingMessages || [];
-        socket.emit('reconnected', {
-          roomId: result.room.id,
-          playerId: result.player.id,
-          coachingMessages,
-        });
-      } else {
-        socket.emit('reconnected', { roomId: result.room.id, playerId: result.player.id });
-      }
-
+      socket.emit('reconnected', { roomId: result.room.id, playerId: result.player.id });
       io.to(result.room.id).emit('room_state', roomManager.getPublicRoomState(result.room.id));
       console.log(`[WS] Reconnected ${result.player.id} to room ${result.room.id}`);
     });
