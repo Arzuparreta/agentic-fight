@@ -10,7 +10,7 @@ export interface AgentPlan {
 }
 export declare function getAgentPlan(agent: AgentState, opponent: AgentState, state: GameState, playstyleMemory: string, characterDescription: string, errorContext?: string): Promise<AgentPlan>;
 export declare function getAgentAction(agent: AgentState, opponent: AgentState, state: GameState, playstyleMemory: string, characterDescription: string, errorContext?: string): Promise<AgentAction>;
-interface CoachingContext {
+export interface CoachingContext {
     agentName: string;
     characterDescription: string;
     money: number;
@@ -27,5 +27,4 @@ interface CoachingContext {
 export declare function generateAgentOpeningMessage(ctx: CoachingContext): Promise<string>;
 export declare function generateAgentResponse(ctx: CoachingContext, conversation: CoachingMessage[], playerMessage: string): Promise<string>;
 export declare function synthesizePlaystyle(ctx: CoachingContext, conversation: CoachingMessage[]): Promise<PlaystyleProfile>;
-export {};
 //# sourceMappingURL=ollama.d.ts.map

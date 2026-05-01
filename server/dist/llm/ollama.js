@@ -1,6 +1,18 @@
 import { getAvailableMoves, MOVE_CATALOG } from '@shared/index';
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'gemma4:latest';
+const LLM_TIMEOUT_MS = 30000;
+async function fetchWithTimeout(url, options, timeoutMs = LLM_TIMEOUT_MS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        const res = await fetch(url, { ...options, signal: controller.signal });
+        return res;
+    }
+    finally {
+        clearTimeout(timer);
+    }
+}
 // ------------------------------------------------------------------
 // Combat Planning (called during simulation)
 // ------------------------------------------------------------------
@@ -51,7 +63,8 @@ export async function getAgentPlan(agent, opponent, state, playstyleMemory, char
         : null;
     const prompt = buildCombatPrompt(agent, opponent, state, playstyleProfile, characterDescription, errorContext);
     try {
-        const res = await fetch(`${OLLAMA_URL}/api/generate`, {
+        console.log(`[LLM] Requesting plan for agent ${agent.id}...`);
+        const res = await fetchWithTimeout(`${OLLAMA_URL}/api/generate`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -70,6 +83,7 @@ export async function getAgentPlan(agent, opponent, state, playstyleMemory, char
         if (!parsed.plan) {
             throw new Error('LLM response missing plan field');
         }
+        console.log(`[LLM] Plan for ${agent.id}: ${parsed.plan} / ${parsed.preferredMove}`);
         return {
             plan: parsed.plan.trim().toLowerCase(),
             preferredMove: parsed.preferredMove?.trim().toLowerCase() || 'basic_attack',
@@ -77,7 +91,7 @@ export async function getAgentPlan(agent, opponent, state, playstyleMemory, char
         };
     }
     catch (err) {
-        console.error(`Ollama error for agent ${agent.id}:`, err);
+        console.error(`[LLM] Error getting plan for ${agent.id}:`, err);
         return { plan: 'approach', preferredMove: 'basic_attack', reasoning: 'LLM call failed, defaulting to approach.' };
     }
 }
@@ -136,7 +150,8 @@ Respond with exactly one JSON object: { "message": "..." }`;
 export async function generateAgentOpeningMessage(ctx) {
     const prompt = buildOpeningPrompt(ctx);
     try {
-        const res = await fetch(`${OLLAMA_URL}/api/generate`, {
+        console.log(`[LLM] Generating opening message for ${ctx.agentName}...`);
+        const res = await fetchWithTimeout(`${OLLAMA_URL}/api/generate`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -156,10 +171,11 @@ export async function generateAgentOpeningMessage(ctx) {
         if (!message) {
             throw new Error('LLM response missing message field');
         }
+        console.log(`[LLM] Opening message for ${ctx.agentName}: "${message.slice(0, 60)}..."`);
         return message;
     }
     catch (err) {
-        console.error('Ollama error generating opening message:', err);
+        console.error('[LLM] Error generating opening message:', err);
         return `My lord, I await your counsel. How shall I fight?`;
     }
 }
@@ -184,7 +200,8 @@ Respond with exactly one JSON object: { "message": "..." }`;
 export async function generateAgentResponse(ctx, conversation, playerMessage) {
     const prompt = buildResponsePrompt(ctx, conversation, playerMessage);
     try {
-        const res = await fetch(`${OLLAMA_URL}/api/generate`, {
+        console.log(`[LLM] Generating response for ${ctx.agentName}...`);
+        const res = await fetchWithTimeout(`${OLLAMA_URL}/api/generate`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -204,11 +221,11 @@ export async function generateAgentResponse(ctx, conversation, playerMessage) {
         if (!message) {
             throw new Error('LLM response missing message field');
         }
+        console.log(`[LLM] Response for ${ctx.agentName}: "${message.slice(0, 60)}..."`);
         return message;
     }
     catch (err) {
-        console.error('Ollama error generating agent response:', err);
-        `I understand, my lord. I shall fight as you command.`;
+        console.error('[LLM] Error generating agent response:', err);
         return `I understand, my lord. I shall fight as you command.`;
     }
 }
@@ -241,7 +258,8 @@ Respond with exactly one JSON object:
 export async function synthesizePlaystyle(ctx, conversation) {
     const prompt = buildSynthesisPrompt(ctx, conversation);
     try {
-        const res = await fetch(`${OLLAMA_URL}/api/generate`, {
+        console.log(`[LLM] Synthesizing playstyle for ${ctx.agentName}...`);
+        const res = await fetchWithTimeout(`${OLLAMA_URL}/api/generate`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -281,7 +299,7 @@ export async function synthesizePlaystyle(ctx, conversation) {
         return { narrative, parameters, directives };
     }
     catch (err) {
-        console.error('Ollama error synthesizing playstyle:', err);
+        console.error('[LLM] Error synthesizing playstyle:', err);
         return {
             narrative: 'I fight to win, adapting to the situation.',
             parameters: { aggressiveness: 50, risk_tolerance: 50, preferred_range: 50, patience: 50, defensiveness: 50, combo_preference: 50 },

@@ -3,7 +3,7 @@ import { createInitialState, getOpponent, advanceCooldowns } from './state';
 import { validateAction, applyActions } from './actions';
 import { getAgentPlan } from '../llm/ollama';
 const MAX_RETRIES = 2;
-const PLAN_INTERVAL = 10;
+const PLAN_INTERVAL = 20;
 function euclideanDistance(a, b) {
     return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
 }
@@ -61,36 +61,54 @@ function chooseMovement(agent, opponent, plan, params, hpRatio) {
         }
         return { action: 'idle', reasoning: 'Holding defensive position' };
     }
+    const dx = opponent.position.x - agent.position.x;
+    const dy = opponent.position.y - agent.position.y;
+    const absDx = Math.abs(dx);
+    const absDy = Math.abs(dy);
     if (dist > idealDistance + tolerance) {
-        const towardX = agent.position.x < opponent.position.x ? 'move_right' : 'move_left';
-        const towardY = agent.position.y < opponent.position.y ? 'move_down' : 'move_up';
-        const approachAggression = params.aggressiveness / 100;
-        if (approachAggression > 0.6 || Math.random() < approachAggression) {
-            return Math.random() < 0.7
-                ? { action: towardX, reasoning: 'Closing distance aggressively' }
-                : { action: towardY, reasoning: 'Closing distance diagonally' };
-        }
-        return { action: towardX, reasoning: 'Approaching cautiously' };
-    }
-    if (dist < idealDistance - tolerance && params.preferred_range > 40) {
-        const awayX = agent.position.x < opponent.position.x ? 'move_left' : 'move_right';
-        return { action: awayX, reasoning: 'Maintaining preferred range' };
-    }
-    if (params.patience > 60 && dist <= idealDistance + tolerance && dist >= idealDistance - tolerance) {
-        const strafeMoves = ['move_up', 'move_down', 'move_left', 'move_right'];
-        const currentDx = opponent.position.x - agent.position.x;
-        const currentDy = opponent.position.y - agent.position.y;
-        let preferredStrafe;
-        if (Math.abs(currentDx) > Math.abs(currentDy)) {
-            preferredStrafe = currentDy >= 0 ? 'move_left' : 'move_right';
+        if (absDx > absDy) {
+            return dx > 0
+                ? { action: 'move_right', reasoning: 'Closing distance horizontally' }
+                : { action: 'move_left', reasoning: 'Closing distance horizontally' };
         }
         else {
-            preferredStrafe = currentDx >= 0 ? 'move_up' : 'move_down';
+            return dy > 0
+                ? { action: 'move_down', reasoning: 'Closing distance vertically' }
+                : { action: 'move_up', reasoning: 'Closing distance vertically' };
+        }
+    }
+    if (dist < idealDistance - tolerance && params.preferred_range > 60) {
+        if (absDx > absDy) {
+            return dx > 0
+                ? { action: 'move_left', reasoning: 'Creating range for kiting' }
+                : { action: 'move_right', reasoning: 'Creating range for kiting' };
+        }
+        else {
+            return dy > 0
+                ? { action: 'move_up', reasoning: 'Creating range for kiting' }
+                : { action: 'move_down', reasoning: 'Creating range for kiting' };
+        }
+    }
+    if (params.patience > 60 && dist <= idealDistance + tolerance && dist >= idealDistance - tolerance) {
+        let preferredStrafe;
+        if (absDx > absDy) {
+            preferredStrafe = dy >= 0 ? 'move_up' : 'move_down';
+        }
+        else {
+            preferredStrafe = dx >= 0 ? 'move_left' : 'move_right';
         }
         return { action: preferredStrafe, reasoning: 'Circle-strafing for position' };
     }
-    const towardX = agent.position.x < opponent.position.x ? 'move_right' : 'move_left';
-    return { action: towardX, reasoning: 'Maintaining pressure' };
+    if (absDx > absDy) {
+        return dx > 0
+            ? { action: 'move_right', reasoning: 'Closing in for attack' }
+            : { action: 'move_left', reasoning: 'Closing in for attack' };
+    }
+    else {
+        return dy > 0
+            ? { action: 'move_down', reasoning: 'Closing in for attack' }
+            : { action: 'move_up', reasoning: 'Closing in for attack' };
+    }
 }
 function chooseAction(agent, opponent, plan, params, hpRatio, opponentHpRatio, runtime) {
     const dist = euclideanDistance(agent.position, opponent.position);
@@ -169,6 +187,15 @@ function chooseAction(agent, opponent, plan, params, hpRatio, opponentHpRatio, r
         if (basicDef && dist <= basicDef.range) {
             return { action: 'basic_attack', reasoning: 'Using basic attack while waiting for abilities' };
         }
+    }
+    const anyMoveInRange = combatMoves.some(m => {
+        const def = getMoveDef(m);
+        return def && def.range && dist <= def.range;
+    });
+    const basicDef = getMoveDef('basic_attack');
+    const basicInRange = basicDef && dist <= basicDef.range;
+    if (anyMoveInRange || basicInRange) {
+        return { action: 'idle', reasoning: 'In range, waiting for cooldowns' };
     }
     return chooseMovement(agent, opponent, plan, params, hpRatio);
 }

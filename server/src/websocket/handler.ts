@@ -30,13 +30,33 @@ export function registerHandlers(io: Server, roomManager: RoomManager) {
       socket.emit('joined_room', { roomId: result.room.id, playerId: result.player.id });
       console.log(`[WS] ${data.role} joined room ${result.room.id}: ${result.player.id}`);
 
-      if (result.room.phase === 'coaching') {
-        const coachingResult = await roomManager.startCoachingConversation(result.room.id);
-        if ('error' in coachingResult) {
-          console.error('[WS] Coaching conversation failed:', coachingResult.error);
-        }
-      }
+      // Emit room_state IMMEDIATELY so client can render coaching screen
       io.to(result.room.id).emit('room_state', roomManager.getPublicRoomState(result.room.id));
+
+      // Fire coaching conversation asynchronously — send agent messages as they arrive
+      if (result.room.phase === 'coaching') {
+        console.log(`[WS] Starting coaching conversation for room ${result.room.id}...`);
+        roomManager.startCoachingConversation(result.room.id).then((coachingResult) => {
+          if ('error' in coachingResult) {
+            console.error('[WS] Coaching conversation failed:', coachingResult.error);
+            return;
+          }
+          console.log(`[WS] Coaching conversation complete for room ${result.room.id}, sending agent messages`);
+          for (const [playerId, message] of Object.entries(coachingResult.agentMessages)) {
+            const player = coachingResult.room.players[playerId];
+            if (player) {
+              io.to(player.socketId).emit('agent_coaching_message', {
+                content: message,
+                timestamp: Date.now(),
+              });
+            }
+          }
+          // Re-emit room_state so clients see the updated coachingMessages
+          io.to(result.room.id).emit('room_state', roomManager.getPublicRoomState(result.room.id));
+        }).catch((err) => {
+          console.error('[WS] Coaching conversation error:', err);
+        });
+      }
     });
 
     socket.on('reconnect', (data: { roomId: string; oldPlayerId: string }) => {
@@ -53,21 +73,25 @@ export function registerHandlers(io: Server, roomManager: RoomManager) {
     });
 
     socket.on('coaching_message', async (data: { roomId: string; playerId: string; content: string }) => {
-      const result = await roomManager.handlePlayerCoachingMessage(data.roomId, data.playerId, data.content);
-      if ('error' in result) {
-        socket.emit('error', { message: result.error });
-        return;
-      }
+      console.log(`[WS] Coaching message in room ${data.roomId} from ${data.playerId}: "${data.content.slice(0, 40)}..."`);
+      try {
+        const result = await roomManager.handlePlayerCoachingMessage(data.roomId, data.playerId, data.content);
+        if ('error' in result) {
+          socket.emit('error', { message: result.error });
+          return;
+        }
 
-      const player = result.room.players[data.playerId];
-      if (player) {
-        io.to(player.socketId).emit('agent_coaching_message', {
-          content: result.agentResponse,
-          timestamp: Date.now(),
-        });
+        const player = result.room.players[data.playerId];
+        if (player) {
+          io.to(player.socketId).emit('agent_coaching_message', {
+            content: result.agentResponse,
+            timestamp: Date.now(),
+          });
+          console.log(`[WS] Agent response sent to ${data.playerId}`);
+        }
+      } catch (err) {
+        console.error('[WS] Error handling coaching message:', err);
       }
-
-      console.log(`[WS] Coaching message in room ${data.roomId} from ${data.playerId}`);
     });
 
     socket.on('coaching_ready', async (data: { roomId: string; playerId: string }) => {
@@ -137,10 +161,20 @@ export function registerHandlers(io: Server, roomManager: RoomManager) {
       }
 
       if (result.room.phase === 'coaching') {
-        const coachingResult = await roomManager.startCoachingConversation(result.room.id);
-        if (!('error' in coachingResult)) {
+        // Emit room_state and phase_change immediately so clients render coaching screen
+        io.to(result.room.id).emit('room_state', roomManager.getPublicRoomState(result.room.id));
+        io.to(result.room.id).emit('phase_change', { newPhase: 'coaching' });
+
+        console.log(`[WS] Starting coaching conversation for room ${result.room.id} (from shop)...`);
+        // Fire coaching conversation asynchronously
+        roomManager.startCoachingConversation(result.room.id).then((coachingResult) => {
+          if ('error' in coachingResult) {
+            console.error('[WS] Coaching conversation failed:', coachingResult.error);
+            return;
+          }
+          console.log(`[WS] Coaching conversation complete for room ${result.room.id}, sending agent messages`);
           for (const [playerId, message] of Object.entries(coachingResult.agentMessages)) {
-            const player = result.room.players[playerId];
+            const player = coachingResult.room.players[playerId];
             if (player) {
               io.to(player.socketId).emit('agent_coaching_message', {
                 content: message,
@@ -148,9 +182,10 @@ export function registerHandlers(io: Server, roomManager: RoomManager) {
               });
             }
           }
-        }
-        io.to(result.room.id).emit('room_state', roomManager.getPublicRoomState(result.room.id));
-        io.to(result.room.id).emit('phase_change', { newPhase: 'coaching' });
+          io.to(result.room.id).emit('room_state', roomManager.getPublicRoomState(result.room.id));
+        }).catch((err) => {
+          console.error('[WS] Coaching conversation error:', err);
+        });
       } else {
         io.to(result.room.id).emit('room_state', roomManager.getPublicRoomState(result.room.id));
       }

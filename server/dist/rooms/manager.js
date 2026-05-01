@@ -171,9 +171,14 @@ export class RoomManager {
         if (room.phase !== 'coaching')
             return { error: 'Not in coaching phase.' };
         const mobiles = Object.values(room.players).filter(p => p.role === 'mobile');
+        const alreadyInitiated = mobiles.some(p => p.coachingMessages.length > 0);
+        if (alreadyInitiated) {
+            return { error: 'Coaching conversation already initiated.' };
+        }
         const agentMessages = {};
         await Promise.all(mobiles.map(async (player) => {
             const ctx = buildCoachingContext(player, room);
+            console.log(`[Room ${roomId}] Generating opening message for ${player.agentName}...`);
             const openingMessage = await generateAgentOpeningMessage(ctx);
             player.coachingMessages.push({
                 sender: 'agent',
@@ -181,6 +186,7 @@ export class RoomManager {
                 timestamp: Date.now(),
             });
             agentMessages[player.id] = openingMessage;
+            console.log(`[Room ${roomId}] Opening message for ${player.agentName}: "${openingMessage.slice(0, 50)}..."`);
         }));
         return { room, agentMessages };
     }
@@ -197,12 +203,14 @@ export class RoomManager {
             timestamp: Date.now(),
         });
         const ctx = buildCoachingContext(player, room);
+        console.log(`[Room ${roomId}] Generating agent response for ${player.agentName}...`);
         const agentResponse = await generateAgentResponse(ctx, player.coachingMessages, content);
         player.coachingMessages.push({
             sender: 'agent',
             content: agentResponse,
             timestamp: Date.now(),
         });
+        console.log(`[Room ${roomId}] Agent response for ${player.agentName}: "${agentResponse.slice(0, 50)}..."`);
         return { room, agentResponse };
     }
     async markCoachingReady(roomId, playerId) {
@@ -218,11 +226,13 @@ export class RoomManager {
         const mobiles = Object.values(room.players).filter((p) => p.role === 'mobile');
         const allReady = mobiles.length === 2 && mobiles.every((p) => p.ready);
         if (allReady) {
+            console.log(`[Room ${roomId}] Both players ready, synthesizing playstyles...`);
             await Promise.all(mobiles.map(async (p) => {
                 const ctx = buildCoachingContext(p, room);
                 const profile = await synthesizePlaystyle(ctx, p.coachingMessages);
                 p.playstyleProfile = profile;
                 p.playstyleMemory = JSON.stringify(profile);
+                console.log(`[Room ${roomId}] Playstyle for ${p.agentName}: ${profile.narrative.slice(0, 50)}...`);
             }));
             mobiles.forEach((p) => (p.ready = false));
             room.phase = 'simulating';
