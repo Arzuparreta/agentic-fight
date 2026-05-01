@@ -35,6 +35,10 @@ export function connectToServer() {
     handlePhaseChange(room.phase, room);
   });
 
+  socket.on('agent_coaching_message', (data: { content: string; timestamp: number }) => {
+    window.dispatchEvent(new CustomEvent('agent-coaching-message', { detail: data }));
+  });
+
   socket.on('phase_change', (data: { newPhase: string }) => {
     handlePhaseChange(data.newPhase);
   });
@@ -79,7 +83,8 @@ function handlePhaseChange(phase: string, room?: unknown) {
       app.innerHTML = '<p style="text-align:center;padding:40px;">Waiting for opponent...</p>';
       break;
     case 'coaching':
-      renderCoachingScreen(app, currentRoomId, currentPlayerId, socket);
+      const existingMessages = room?.players?.[currentPlayerId]?.coachingMessages || [];
+      renderCoachingScreen(app, currentRoomId, currentPlayerId, socket, existingMessages);
       break;
     case 'simulating':
       renderWatchingScreen(app, 'Simulating battle...');

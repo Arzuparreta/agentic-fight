@@ -4,7 +4,8 @@ export function renderCoachingScreen(
   container: HTMLElement,
   roomId: string,
   playerId: string,
-  socket: Socket
+  socket: Socket,
+  existingMessages?: { sender: 'player' | 'agent'; content: string }[]
 ) {
   const messages: { sender: 'player' | 'agent'; content: string }[] = [];
 
@@ -54,6 +55,12 @@ export function renderCoachingScreen(
     chatHistory.scrollTop = chatHistory.scrollHeight;
   }
 
+  if (existingMessages && existingMessages.length > 0) {
+    for (const msg of existingMessages) {
+      addMessage(msg.sender, msg.content);
+    }
+  }
+
   function sendMessage() {
     const content = input.value.trim();
     if (!content) return;
@@ -81,7 +88,10 @@ export function renderCoachingScreen(
     socket.emit('coaching_ready', { roomId, playerId });
   });
 
-  socket.on('agent_coaching_message', (data: { content: string; timestamp: number }) => {
+  const agentMessageHandler = ((e: CustomEvent) => {
+    const data = e.detail as { content: string };
     addMessage('agent', data.content);
-  });
+  }) as EventListener;
+
+  window.addEventListener('agent-coaching-message', agentMessageHandler);
 }

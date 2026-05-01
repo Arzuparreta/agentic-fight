@@ -1,4 +1,4 @@
-import { SimEvent, AgentState, ARENA } from '@shared/index';
+import { SimEvent, ARENA } from '@shared/index';
 import { SpriteDef, renderSprite, getSpriteForCharacter } from './sprites';
 import { AudioManager } from '../game/audio';
 
@@ -25,7 +25,6 @@ export class Renderer {
   private ctx: CanvasRenderingContext2D;
   private width = 0;
   private height = 0;
-  private groundY = 0;
   private scale = 4;
 
   private agents: Map<string, AgentVisual> = new Map();
@@ -35,7 +34,8 @@ export class Renderer {
   private showHUD = true;
   private snapToEvent = false;
 
-  private skyGradient: CanvasGradient | null = null;
+  private groundColor = '#5a4a3a';
+  private borderColor = '#3e2723';
 
   constructor(private canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext('2d')!;
@@ -45,12 +45,6 @@ export class Renderer {
   resize(width: number, height: number) {
     this.width = width;
     this.height = height;
-    this.groundY = Math.floor(height * 0.75);
-
-    this.skyGradient = this.ctx.createLinearGradient(0, 0, 0, this.groundY);
-    this.skyGradient.addColorStop(0, '#1a0f0a');
-    this.skyGradient.addColorStop(0.5, '#2c1810');
-    this.skyGradient.addColorStop(1, '#3e2723');
   }
 
   setAgents(agentConfigs: { id: string; name: string; description: string; position: Vec2; hp: number; maxHp: number }[]) {
@@ -149,14 +143,13 @@ export class Renderer {
   }
 
   private arenaToScreen(arenaPos: Vec2): Vec2 {
-    const arenaPaddingX = this.width * 0.1;
-    const arenaPaddingY = this.height * 0.1;
-    const arenaScreenWidth = this.width * 0.8;
-    const arenaScreenHeight = (this.groundY - arenaPaddingY);
+    const padding = 40;
+    const availWidth = this.width - padding * 2;
+    const availHeight = this.height - padding * 2;
 
     return {
-      x: arenaPaddingX + (arenaPos.x / ARENA.width) * arenaScreenWidth,
-      y: arenaPaddingY + (arenaPos.y / ARENA.height) * arenaScreenHeight,
+      x: padding + (arenaPos.x / ARENA.width) * availWidth,
+      y: padding + (arenaPos.y / ARENA.height) * availHeight,
     };
   }
 
@@ -190,7 +183,6 @@ export class Renderer {
     this.ctx.clearRect(0, 0, this.width, this.height);
 
     this.renderBackground();
-    this.renderGround();
 
     const sortedAgents = Array.from(this.agents.values()).sort((a, b) => a.position.y - b.position.y);
 
@@ -204,61 +196,39 @@ export class Renderer {
   }
 
   private renderBackground() {
-    if (this.skyGradient) {
-      this.ctx.fillStyle = this.skyGradient;
-      this.ctx.fillRect(0, 0, this.width, this.groundY);
-    }
+    this.ctx.fillStyle = '#2c1810';
+    this.ctx.fillRect(0, 0, this.width, this.height);
 
-    this.ctx.fillStyle = '#0d0705';
-    this.renderCastle(this.width * 0.15, this.groundY - 80, 0.6);
-    this.renderCastle(this.width * 0.7, this.groundY - 60, 0.4);
+    const padding = 40;
+    const arenaX = padding;
+    const arenaY = padding;
+    const arenaW = this.width - padding * 2;
+    const arenaH = this.height - padding * 2;
 
-    this.ctx.fillStyle = '#f0e6d2';
-    for (let i = 0; i < 20; i++) {
-      const x = ((i * 137) % this.width);
-      const y = ((i * 53) % (this.groundY * 0.5));
-      this.ctx.globalAlpha = 0.3 + (Math.sin(Date.now() * 0.001 + i) * 0.2);
-      this.ctx.fillRect(x, y, 2, 2);
-    }
-    this.ctx.globalAlpha = 1;
-  }
+    this.ctx.fillStyle = this.groundColor;
+    this.ctx.fillRect(arenaX, arenaY, arenaW, arenaH);
 
-  private renderCastle(x: number, y: number, scale: number) {
-    const w = 120 * scale;
-    const h = 80 * scale;
-    const towerW = 20 * scale;
-    const towerH = 40 * scale;
-
-    this.ctx.fillRect(x, y - h + towerH, w, h - towerH);
-    this.ctx.fillRect(x - towerW * 0.3, y - h - towerH * 0.3, towerW, towerH);
-    this.ctx.fillRect(x + w - towerW * 0.7, y - h - towerH * 0.3, towerW, towerH);
-    this.ctx.fillRect(x + w * 0.4, y - h - towerH * 0.5, towerW, towerH * 1.2);
-
-    const battlementSize = 8 * scale;
-    for (let i = 0; i < 5; i++) {
-      this.ctx.fillRect(x + i * battlementSize * 2, y - h + towerH - battlementSize, battlementSize, battlementSize);
-    }
-  }
-
-  private renderGround() {
-    this.ctx.fillStyle = '#3e2723';
-    this.ctx.fillRect(0, this.groundY, this.width, this.height - this.groundY);
+    this.ctx.strokeStyle = this.borderColor;
+    this.ctx.lineWidth = 3;
+    this.ctx.strokeRect(arenaX, arenaY, arenaW, arenaH);
 
     this.ctx.strokeStyle = '#4e342e';
-    this.ctx.lineWidth = 2;
-    for (let i = 0; i < 10; i++) {
-      const y = this.groundY + (i * (this.height - this.groundY) / 10);
+    this.ctx.lineWidth = 1;
+    this.ctx.globalAlpha = 0.3;
+    const gridSize = 50;
+    for (let x = arenaX; x <= arenaX + arenaW; x += (gridSize / ARENA.width) * arenaW) {
       this.ctx.beginPath();
-      this.ctx.moveTo(0, y);
-      this.ctx.lineTo(this.width, y);
+      this.ctx.moveTo(x, arenaY);
+      this.ctx.lineTo(x, arenaY + arenaH);
       this.ctx.stroke();
     }
-
-    this.ctx.fillStyle = '#5d4037';
-    for (let i = 0; i <= 10; i++) {
-      const x = this.arenaToScreen({ x: (ARENA.width / 10) * i, y: 0 }).x;
-      this.ctx.fillRect(x - 2, this.groundY - 5, 4, 10);
+    for (let y = arenaY; y <= arenaY + arenaH; y += (gridSize / ARENA.height) * arenaH) {
+      this.ctx.beginPath();
+      this.ctx.moveTo(arenaX, y);
+      this.ctx.lineTo(arenaX + arenaW, y);
+      this.ctx.stroke();
     }
+    this.ctx.globalAlpha = 1;
   }
 
   private renderAgent(agent: AgentVisual) {
@@ -269,11 +239,11 @@ export class Renderer {
     const spriteHeight = agent.sprite.height * this.scale;
     const spriteWidth = agent.sprite.width * this.scale;
     const drawX = screenX - spriteWidth / 2;
-    const drawY = this.groundY - spriteHeight - (screenY - this.groundY * 0.1) * 0.3;
+    const drawY = screenY - spriteHeight / 2;
 
     this.ctx.fillStyle = 'rgba(0,0,0,0.3)';
     this.ctx.beginPath();
-    this.ctx.ellipse(screenX, this.groundY - (screenY - this.groundY * 0.1) * 0.15, spriteWidth * 0.4, 6, 0, 0, Math.PI * 2);
+    this.ctx.ellipse(screenX, screenY + spriteHeight * 0.4, spriteWidth * 0.35, 5, 0, 0, Math.PI * 2);
     this.ctx.fill();
 
     if (agent.flashTime > 0) {
@@ -289,10 +259,10 @@ export class Renderer {
     this.ctx.fillStyle = '#f0e6d2';
     this.ctx.font = 'bold 14px Georgia, serif';
     this.ctx.textAlign = 'center';
-    this.ctx.fillText(agent.name, screenX, drawY - 10);
+    this.ctx.fillText(agent.name, screenX, drawY - 8);
 
     if (agent.popupText && agent.popupTimer > 0) {
-      const popupY = drawY - 25 - (30 - agent.popupTimer);
+      const popupY = drawY - 20 - (30 - agent.popupTimer);
       this.ctx.save();
       this.ctx.globalAlpha = Math.min(1, agent.popupTimer / 10);
       this.ctx.fillStyle = '#f1c40f';
@@ -332,7 +302,7 @@ export class Renderer {
 
     const barX = align === 'left' ? x : x - barWidth;
 
-    this.ctx.fillStyle = '#2c1810';
+    this.ctx.fillStyle = '#1a0f0a';
     this.ctx.fillRect(barX, y, barWidth, barHeight);
 
     this.ctx.strokeStyle = '#f0e6d2';

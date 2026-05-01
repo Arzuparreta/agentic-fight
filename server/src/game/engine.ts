@@ -41,7 +41,7 @@ export interface SimulationResult {
 }
 
 const MAX_RETRIES = 2;
-const PLAN_INTERVAL = 10;
+const PLAN_INTERVAL = 20;
 
 interface AgentRuntime {
   plan: AgentPlan;
