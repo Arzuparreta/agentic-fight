@@ -9,7 +9,6 @@ let currentRoomId = '';
 let currentPlayerId = '';
 let currentPhase = '';
 
-// Auto-detect server URL from current location
 const SERVER_URL = window.location.origin;
 
 export function connectToServer() {
@@ -68,12 +67,10 @@ export function connectToServer() {
   return socket;
 }
 
-function handlePhaseChange(phase: string, room?: unknown) {
+function handlePhaseChange(phase: string, room?: { players?: Record<string, { coachingMessages?: { sender: string; content: string }[] }> }) {
   const app = document.getElementById('app')!;
 
-  // Only re-render the entire screen if the phase actually changed
   if (phase === currentPhase) {
-    // Phase hasn't changed — do not destroy the current screen
     return;
   }
   currentPhase = phase;
@@ -82,15 +79,20 @@ function handlePhaseChange(phase: string, room?: unknown) {
     case 'lobby':
       app.innerHTML = '<p style="text-align:center;padding:40px;">Waiting for opponent...</p>';
       break;
-    case 'coaching':
-      const existingMessages = room?.players?.[currentPlayerId]?.coachingMessages || [];
+    case 'coaching': {
+      const playerData = room?.players?.[currentPlayerId];
+      const existingMessages = playerData?.coachingMessages?.map(m => ({
+        sender: m.sender as 'player' | 'agent',
+        content: m.content,
+      })) || [];
       renderCoachingScreen(app, currentRoomId, currentPlayerId, socket, existingMessages);
       break;
+    }
     case 'simulating':
       renderWatchingScreen(app, 'Simulating battle...');
       break;
     case 'playback':
-      renderWatchingScreen(app, '¡Fight in progress! Watch the main screen.');
+      renderWatchingScreen(app, 'Fight in progress! Watch the main screen.');
       break;
     case 'shop':
       renderShopScreen(app, currentRoomId, currentPlayerId, socket);

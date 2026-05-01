@@ -27,15 +27,22 @@ export function registerHandlers(io: Server, roomManager: RoomManager) {
       }
 
       socket.join(result.room.id);
-      socket.emit('joined_room', { roomId: result.room.id, playerId: result.player.id });
       console.log(`[WS] ${data.role} joined room ${result.room.id}: ${result.player.id}`);
 
       if (result.room.phase === 'coaching') {
         const coachingResult = await roomManager.startCoachingConversation(result.room.id);
         if (!('error' in coachingResult)) {
+          const player = result.room.players[result.player.id];
+          const coachingMessages = player?.coachingMessages || [];
+          socket.emit('joined_room', {
+            roomId: result.room.id,
+            playerId: result.player.id,
+            coachingMessages,
+          });
           io.to(result.room.id).emit('room_state', roomManager.getPublicRoomState(result.room.id));
         }
       } else {
+        socket.emit('joined_room', { roomId: result.room.id, playerId: result.player.id });
         io.to(result.room.id).emit('room_state', roomManager.getPublicRoomState(result.room.id));
       }
     });
@@ -48,7 +55,19 @@ export function registerHandlers(io: Server, roomManager: RoomManager) {
       }
 
       socket.join(result.room.id);
-      socket.emit('reconnected', { roomId: result.room.id, playerId: result.player.id });
+
+      if (result.room.phase === 'coaching') {
+        const player = result.room.players[result.player.id];
+        const coachingMessages = player?.coachingMessages || [];
+        socket.emit('reconnected', {
+          roomId: result.room.id,
+          playerId: result.player.id,
+          coachingMessages,
+        });
+      } else {
+        socket.emit('reconnected', { roomId: result.room.id, playerId: result.player.id });
+      }
+
       io.to(result.room.id).emit('room_state', roomManager.getPublicRoomState(result.room.id));
       console.log(`[WS] Reconnected ${result.player.id} to room ${result.room.id}`);
     });
@@ -139,6 +158,17 @@ export function registerHandlers(io: Server, roomManager: RoomManager) {
 
       if (result.room.phase === 'coaching') {
         const coachingResult = await roomManager.startCoachingConversation(result.room.id);
+        if (!('error' in coachingResult)) {
+          for (const [playerId, message] of Object.entries(coachingResult.agentMessages)) {
+            const player = result.room.players[playerId];
+            if (player) {
+              io.to(player.socketId).emit('agent_coaching_message', {
+                content: message,
+                timestamp: Date.now(),
+              });
+            }
+          }
+        }
         io.to(result.room.id).emit('room_state', roomManager.getPublicRoomState(result.room.id));
         io.to(result.room.id).emit('phase_change', { newPhase: 'coaching' });
       } else {
