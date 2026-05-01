@@ -28,22 +28,15 @@ export function registerHandlers(io: Server, roomManager: RoomManager) {
 
       socket.join(result.room.id);
       socket.emit('joined_room', { roomId: result.room.id, playerId: result.player.id });
-      io.to(result.room.id).emit('room_state', roomManager.getPublicRoomState(result.room.id));
       console.log(`[WS] ${data.role} joined room ${result.room.id}: ${result.player.id}`);
 
       if (result.room.phase === 'coaching') {
         const coachingResult = await roomManager.startCoachingConversation(result.room.id);
         if (!('error' in coachingResult)) {
-          for (const [playerId, message] of Object.entries(coachingResult.agentMessages)) {
-            const player = result.room.players[playerId];
-            if (player) {
-              io.to(player.socketId).emit('agent_coaching_message', {
-                content: message,
-                timestamp: Date.now(),
-              });
-            }
-          }
+          io.to(result.room.id).emit('room_state', roomManager.getPublicRoomState(result.room.id));
         }
+      } else {
+        io.to(result.room.id).emit('room_state', roomManager.getPublicRoomState(result.room.id));
       }
     });
 
@@ -67,12 +60,13 @@ export function registerHandlers(io: Server, roomManager: RoomManager) {
         return;
       }
 
-      socket.emit('coaching_echo', { content: data.content, timestamp: Date.now() });
-
-      io.to(result.room.id).emit('agent_coaching_message', {
-        content: result.agentResponse,
-        timestamp: Date.now(),
-      });
+      const player = result.room.players[data.playerId];
+      if (player) {
+        io.to(player.socketId).emit('agent_coaching_message', {
+          content: result.agentResponse,
+          timestamp: Date.now(),
+        });
+      }
 
       console.log(`[WS] Coaching message in room ${data.roomId} from ${data.playerId}`);
     });
@@ -143,23 +137,12 @@ export function registerHandlers(io: Server, roomManager: RoomManager) {
         return;
       }
 
-      io.to(result.room.id).emit('room_state', roomManager.getPublicRoomState(result.room.id));
-
       if (result.room.phase === 'coaching') {
-        io.to(result.room.id).emit('phase_change', { newPhase: 'coaching' });
-
         const coachingResult = await roomManager.startCoachingConversation(result.room.id);
-        if (!('error' in coachingResult)) {
-          for (const [playerId, message] of Object.entries(coachingResult.agentMessages)) {
-            const player = result.room.players[playerId];
-            if (player) {
-              io.to(player.socketId).emit('agent_coaching_message', {
-                content: message,
-                timestamp: Date.now(),
-              });
-            }
-          }
-        }
+        io.to(result.room.id).emit('room_state', roomManager.getPublicRoomState(result.room.id));
+        io.to(result.room.id).emit('phase_change', { newPhase: 'coaching' });
+      } else {
+        io.to(result.room.id).emit('room_state', roomManager.getPublicRoomState(result.room.id));
       }
     });
 
