@@ -10,8 +10,8 @@ A multiplayer browser-based game where players coach AI agents via mobile chat t
 
 - **Node.js** v18+ and **npm**
 - **Ollama** running locally with at least one model (we recommend `gemma4:latest`)
-- A **local WiFi network** where your computer and phones can communicate
-- **2 mobile phones** (or 1 phone + 1 laptop for testing)
+- **Tailscale** installed and running on the server and all player devices
+- **2+ devices** connected to your Tailscale network (phones, laptops, etc.)
 
 ---
 
@@ -44,57 +44,63 @@ Create a `.env` file:
 cp .env.example .env
 ```
 
-Edit `.env` if your Ollama runs on a different URL or you want a different model.
+The default port is **3002** (port 3000 is used by Open WebUI on this server).
 
 ### 3. Start the Server
 
 ```bash
-npm run start
+npm start
 ```
 
 You should see output like:
 
 ```
-╔════════════════════════════════════════════════════════════╗
-║              AGENTIC FIGHT — Server Running                ║
-╠════════════════════════════════════════════════════════════╣
-║  Local:     http://localhost:3000/browser                   ║
-║  Network:   http://192.168.1.138:3000/browser              ║
-╠════════════════════════════════════════════════════════════╣
-║  Mobile:    http://192.168.1.138:3000/mobile               ║
-║            (Open this on your phone browser)               ║
-╚════════════════════════════════════════════════════════════╝
+============================================================
+|              AGENTIC FIGHT — Server Running                |
+============================================================
+|  Local:     http://localhost:3002/browser                   |
+|  Network:   http://192.168.1.138:3002/browser              |
+============================================================
+|  Mobile:    http://192.168.1.138:3002/mobile               |
+|            (Open this on your phone browser)               |
+============================================================
 ```
 
-**The `Network:` URL is what your phones will use.**
+### 4. Access from Any Tailscale Device
 
-### 4. Open the Browser Display
+Since this server runs on a headless machine accessed via Tailscale, **any device on your Tailscale network** can reach the game:
 
-On your **main screen** (laptop connected to a TV, or a second monitor):
-
+**Browser Display** (main screen / TV / laptop):
 ```
-http://192.168.1.138:3000/browser
+http://desktop-ruben:3002/browser
 ```
-
-You will see a **4-letter room code** (e.g., `WJZK`). This is your pairing code.
-
-### 5. Players Join from Their Phones
-
-Each player opens their phone browser and goes to:
-
+Or via IP:
 ```
-http://192.168.1.138:3000/mobile
+http://100.91.167.48:3002/browser
 ```
 
-Then they:
-1. Enter the **room code** shown on the browser display
-2. Choose an **agent name** (e.g., "Don Rodrigo")
-3. Select a **character type** (Knight, Moor, Friar, Conquistador)
-4. Tap **Join Battle**
+**Mobile Coaching** (phones):
+```
+http://desktop-ruben:3002/mobile
+```
+Or via IP:
+```
+http://100.91.167.48:3002/mobile
+```
 
-### 6. Play the Game
+> 💡 **Tip:** Use the Tailscale machine name (`desktop-ruben`) — it works even if the IP changes.
 
-Once both players have joined, the game flows automatically:
+### 5. Play the Game
+
+Once the browser display is open, you will see a **4-letter room code** (e.g., `WJZK`).
+
+Each player opens their phone browser, goes to the mobile URL, and:
+1. Enters the **room code**
+2. Chooses an **agent name** (e.g., "Don Rodrigo")
+3. Selects a **character type** (Knight, Moor, Friar, Conquistador)
+4. Taps **Join Battle**
+
+The game flows automatically:
 
 ```
 Coaching Phase  →  Both players hit READY  →  Simulation runs (~20s)
@@ -131,7 +137,7 @@ npm run dev:mobile
 ```
 Opens at `http://localhost:5174`
 
-> ⚠️ In dev mode, the browser and mobile clients still try to connect to `http://localhost:3000` for the WebSocket server. For LAN testing, use the production build (`npm run start`) instead.
+> ⚠️ In dev mode, the browser and mobile clients still try to connect to the server via `window.location.origin`. For Tailscale testing, use the production build (`npm start`) instead.
 
 ---
 
@@ -139,10 +145,13 @@ Opens at `http://localhost:5174`
 
 ### "Cannot connect to server" on phone
 
-1. Make sure your phone is on the **same WiFi network** as your computer
-2. Check that the server is bound to `0.0.0.0` (default)
-3. Try accessing `http://YOUR_COMPUTER_IP:3000/health` from your phone browser
-4. If that works but the game doesn't, check that port 3000 is not blocked by a firewall
+1. Make sure your phone is connected to **Tailscale** (check the Tailscale app)
+2. Verify you can ping the server: `ping desktop-ruben` or `ping 100.91.167.48`
+3. Try accessing `http://desktop-ruben:3002/health` from your phone browser
+4. If that works but the game doesn't, check that port 3002 is not blocked by a firewall:
+   ```bash
+   sudo ufw allow 3002/tcp
+   ```
 
 ### Ollama is slow or returns 404
 
@@ -150,6 +159,14 @@ Opens at `http://localhost:5174`
 2. Check that the model is loaded: `ollama list`
 3. The first call may be slow while the model loads into VRAM
 4. If you have < 8GB VRAM, use a smaller model like `gemma4:4b`
+
+### Port 3002 is already in use
+
+Change the port in `.env`:
+```bash
+PORT=3003
+```
+Then restart the server.
 
 ### Game feels too slow / too fast
 
@@ -202,6 +219,18 @@ agentic-fight/
 - **Real-time:** Socket.io
 - **LLM:** Ollama (local) — currently using `gemma4:latest`
 - **Build:** Vite (browser + mobile), tsx (server)
+- **Networking:** Tailscale (for remote/multi-device access)
+
+---
+
+## Tailscale Network Info
+
+Your current Tailscale network:
+- **Server:** `desktop-ruben` (100.91.167.48)
+- **iPhone:** `iphone-ruben` (100.86.18.8)
+- **ThinkPad:** `thinkpad` (100.65.213.90)
+
+All devices can reach the game at: `http://desktop-ruben:3002`
 
 ---
 

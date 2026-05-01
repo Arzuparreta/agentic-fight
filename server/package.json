@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "TSX_TSCONFIG_PATH=../tsconfig.json tsx src/index.ts"
   },
   "dependencies": {
     "@agentic-fight/shared": "^1.0.0",
