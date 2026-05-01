@@ -3,6 +3,7 @@ import path from 'path';
 
 export default defineConfig({
   root: '.',
+  base: '/browser/',
   build: {
     outDir: 'dist',
     emptyOutDir: true
