@@ -44,7 +44,7 @@ Create a `.env` file:
 cp .env.example .env
 ```
 
-The default port is **3002** (port 3000 is used by Open WebUI on this server).
+The default port is **3004** (port 3000 is used by Open WebUI on this server).
 
 ### 3. Start the Server
 
@@ -58,10 +58,10 @@ You should see output like:
 ============================================================
 |              AGENTIC FIGHT — Server Running                |
 ============================================================
-|  Local:     http://localhost:3002/browser                   |
-|  Network:   http://192.168.1.138:3002/browser              |
+|  Local:     http://localhost:3004/browser                   |
+|  Network:   http://192.168.1.138:3004/browser              |
 ============================================================
-|  Mobile:    http://192.168.1.138:3002/mobile               |
+|  Mobile:    http://192.168.1.138:3004/mobile               |
 |            (Open this on your phone browser)               |
 ============================================================
 ```
@@ -72,20 +72,20 @@ Since this server runs on a headless machine accessed via Tailscale, **any devic
 
 **Browser Display** (main screen / TV / laptop):
 ```
-http://desktop-ruben:3002/browser
+http://desktop-ruben:3004/browser
 ```
 Or via IP:
 ```
-http://100.91.167.48:3002/browser
+http://100.91.167.48:3004/browser
 ```
 
 **Mobile Coaching** (phones):
 ```
-http://desktop-ruben:3002/mobile
+http://desktop-ruben:3004/mobile
 ```
 Or via IP:
 ```
-http://100.91.167.48:3002/mobile
+http://100.91.167.48:3004/mobile
 ```
 
 > 💡 **Tip:** Use the Tailscale machine name (`desktop-ruben`) — it works even if the IP changes.
@@ -147,10 +147,10 @@ Opens at `http://localhost:5174`
 
 1. Make sure your phone is connected to **Tailscale** (check the Tailscale app)
 2. Verify you can ping the server: `ping desktop-ruben` or `ping 100.91.167.48`
-3. Try accessing `http://desktop-ruben:3002/health` from your phone browser
-4. If that works but the game doesn't, check that port 3002 is not blocked by a firewall:
+3. Try accessing `http://desktop-ruben:3004/health` from your phone browser
+4. If that works but the game doesn't, check that port 3004 is not blocked by a firewall:
    ```bash
-   sudo ufw allow 3002/tcp
+   sudo ufw allow 3004/tcp
    ```
 
 ### Ollama is slow or returns 404
@@ -160,11 +160,11 @@ Opens at `http://localhost:5174`
 3. The first call may be slow while the model loads into VRAM
 4. If you have < 8GB VRAM, use a smaller model like `gemma4:4b`
 
-### Port 3002 is already in use
+### Port 3004 is already in use
 
 Change the port in `.env`:
 ```bash
-PORT=3003
+PORT=3004
 ```
 Then restart the server.
 
@@ -230,7 +230,7 @@ Your current Tailscale network:
 - **iPhone:** `iphone-ruben` (100.86.18.8)
 - **ThinkPad:** `thinkpad` (100.65.213.90)
 
-All devices can reach the game at: `http://desktop-ruben:3002`
+All devices can reach the game at: `http://desktop-ruben:3004`
 
 ---
 
