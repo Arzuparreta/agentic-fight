@@ -7,6 +7,7 @@ import { renderWatchingScreen } from './screens/watching';
 let socket: Socket;
 let currentRoomId = '';
 let currentPlayerId = '';
+let currentPhase = '';
 
 // Auto-detect server URL from current location
 const SERVER_URL = window.location.origin;
@@ -65,6 +66,13 @@ export function connectToServer() {
 
 function handlePhaseChange(phase: string, room?: unknown) {
   const app = document.getElementById('app')!;
+
+  // Only re-render the entire screen if the phase actually changed
+  if (phase === currentPhase) {
+    // Phase hasn't changed — do not destroy the current screen
+    return;
+  }
+  currentPhase = phase;
 
   switch (phase) {
     case 'lobby':

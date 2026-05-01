@@ -128,6 +128,10 @@ function showMessage(text: string) {
 function startPlayback(eventLog: SimEvent[], _roundResult: RoundResult) {
   if (!renderer) return;
 
+  // Clear the room code overlay so the fight is visible
+  const ui = document.getElementById('ui')!;
+  ui.innerHTML = '';
+
   const agentIds = new Set<string>();
   for (const ev of eventLog) {
     agentIds.add(ev.agentId);
@@ -168,6 +172,7 @@ function startPlayback(eventLog: SimEvent[], _roundResult: RoundResult) {
   renderer.setAgents(agentConfigs);
   renderer.setMaxTicks(600);
   renderer.setTick(0);
+  renderer.setSnapToEvent(true); // snap instantly to exact event positions during playback
 
   if (playback) {
     playback.stop();
@@ -181,6 +186,7 @@ function startPlayback(eventLog: SimEvent[], _roundResult: RoundResult) {
     },
     () => {
       console.log('Playback complete');
+      renderer.setSnapToEvent(false);
       if (currentRoomId) {
         socket.emit('playback_complete', { roomId: currentRoomId });
       }
@@ -194,4 +200,8 @@ function startPlayback(eventLog: SimEvent[], _roundResult: RoundResult) {
 export function initRenderer(canvas: HTMLCanvasElement) {
   renderer = new Renderer(canvas);
   renderer.start();
+}
+
+export function getRenderer(): Renderer | null {
+  return renderer;
 }

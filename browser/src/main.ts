@@ -1,4 +1,4 @@
-import { connectToServer, initRenderer } from './network';
+import { connectToServer, initRenderer, getRenderer } from './network';
 
 console.log('Agentic Fight — Browser Display initializing...');
 
@@ -7,7 +7,12 @@ const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
 function resize() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
-  initRenderer(canvas);
+  const renderer = getRenderer();
+  if (renderer) {
+    renderer.resize(canvas.width, canvas.height);
+  } else {
+    initRenderer(canvas);
+  }
 }
 
 window.addEventListener('resize', resize);

@@ -29,6 +29,7 @@ export class Renderer {
   private maxTicks = 0;
   private audio = new AudioManager();
   private showHUD = true;
+  private snapToEvent = false; // during playback: snap instantly to exact positions
 
   // Background
   private skyGradient: CanvasGradient | null = null;
@@ -75,6 +76,10 @@ export class Renderer {
 
   setTick(tick: number) {
     this.tick = tick;
+  }
+
+  setSnapToEvent(snap: boolean) {
+    this.snapToEvent = snap;
   }
 
   handleEvents(events: SimEvent[]) {
@@ -147,13 +152,18 @@ export class Renderer {
   }
 
   update() {
-    // Interpolate positions toward targets
     for (const agent of this.agents.values()) {
       const diff = agent.targetPosition - agent.position;
-      if (Math.abs(diff) > 0.5) {
-        agent.position += diff * 0.3; // smooth lerp
-      } else {
+      if (this.snapToEvent) {
+        // During playback: snap instantly to exact event positions
         agent.position = agent.targetPosition;
+      } else {
+        // Normal mode: smooth interpolation
+        if (Math.abs(diff) > 0.5) {
+          agent.position += diff * 0.3;
+        } else {
+          agent.position = agent.targetPosition;
+        }
       }
 
       // Tick down effects
@@ -174,8 +184,21 @@ export class Renderer {
 
     // Agents (sorted by position for simple depth)
     const sortedAgents = Array.from(this.agents.values()).sort((a, b) => a.position - b.position);
+
+    // Detect visual collision: if agents are very close, offset them horizontally
+    const visualOffsets = new Map<string, number>();
+    if (sortedAgents.length === 2) {
+      const dist = Math.abs(sortedAgents[0].position - sortedAgents[1].position);
+      const spriteScreenWidth = sortedAgents[0].sprite.width * this.scale;
+      // If closer than half a sprite width, they overlap visually
+      if (dist < spriteScreenWidth * 0.6) {
+        visualOffsets.set(sortedAgents[0].id, -spriteScreenWidth * 0.35);
+        visualOffsets.set(sortedAgents[1].id, spriteScreenWidth * 0.35);
+      }
+    }
+
     for (const agent of sortedAgents) {
-      this.renderAgent(agent);
+      this.renderAgent(agent, visualOffsets.get(agent.id) || 0);
     }
 
     // HUD
@@ -252,8 +275,8 @@ export class Renderer {
     }
   }
 
-  private renderAgent(agent: AgentVisual) {
-    const screenX = this.arenaToScreenX(agent.position);
+  private renderAgent(agent: AgentVisual, visualOffsetX = 0) {
+    const screenX = this.arenaToScreenX(agent.position) + visualOffsetX;
     const spriteHeight = agent.sprite.height * this.scale;
     const spriteWidth = agent.sprite.width * this.scale;
     const drawX = screenX - spriteWidth / 2;
