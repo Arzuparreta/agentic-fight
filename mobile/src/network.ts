@@ -35,9 +35,11 @@ export function connectToServer() {
     handlePhaseChange(room.phase, room);
   });
 
-  socket.on('agent_coaching_message', (data: { content: string; timestamp: number }) => {
-    console.log(`[Mobile] agent_coaching_message received: "${data.content?.slice(0, 40)}..."`);
-    window.dispatchEvent(new CustomEvent('agent-coaching-message', { detail: data }));
+  socket.on('agent_coaching_message', (data: { playerId: string; content: string; timestamp: number }) => {
+    console.log(`[Mobile] agent_coaching_message received: playerId=${data.playerId} content="${data.content?.slice(0, 40)}..." (currentPlayerId=${currentPlayerId})`);
+    if (data.playerId === currentPlayerId) {
+      window.dispatchEvent(new CustomEvent('agent-coaching-message', { detail: { content: data.content, timestamp: data.timestamp } }));
+    }
   });
 
   socket.on('phase_change', (data: { newPhase: string }) => {

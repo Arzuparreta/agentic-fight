@@ -80,6 +80,7 @@ export function renderCoachingScreen(
     addMessage('player', content);
     input.value = '';
 
+    console.log(`[Coaching] Emitting coaching_message: roomId=${roomId}, playerId=${playerId}, content="${content.slice(0, 40)}"`);
     socket.emit('coaching_message', {
       roomId,
       playerId,
