@@ -1,0 +1,21 @@
+{
+  "name": "agentic-fight",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "shared",
+    "server",
+    "browser",
+    "mobile"
+  ],
+  "scripts": {
+    "dev:server": "npm run dev -w server",
+    "dev:browser": "npm run dev -w browser",
+    "dev:mobile": "npm run dev -w mobile",
+    "build": "npm run build -ws",
+    "start": "npm run start -w server"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}

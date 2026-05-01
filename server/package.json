@@ -1,0 +1,21 @@
+{
+  "name": "@agentic-fight/server",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@agentic-fight/shared": "^1.0.0",
+    "express": "^4.19.0",
+    "socket.io": "^4.7.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.0",
+    "@types/node": "^20.0.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.5"
+  }
+}

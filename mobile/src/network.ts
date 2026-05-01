@@ -1,0 +1,101 @@
+import { io, Socket } from 'socket.io-client';
+import { renderPairingScreen } from './screens/pairing';
+import { renderCoachingScreen } from './screens/coaching';
+import { renderShopScreen } from './screens/shop';
+import { renderWatchingScreen } from './screens/watching';
+
+let socket: Socket;
+let currentRoomId = '';
+let currentPlayerId = '';
+
+// Auto-detect server URL from current location
+const SERVER_URL = window.location.origin;
+
+export function connectToServer() {
+  socket = io(SERVER_URL);
+
+  socket.on('connect', () => {
+    console.log('Mobile coach connected');
+  });
+
+  socket.on('joined_room', (data: { roomId: string; playerId: string }) => {
+    currentRoomId = data.roomId;
+    currentPlayerId = data.playerId;
+    console.log(`Joined room ${data.roomId} as ${data.playerId}`);
+  });
+
+  socket.on('reconnected', (data: { roomId: string; playerId: string }) => {
+    currentRoomId = data.roomId;
+    currentPlayerId = data.playerId;
+    console.log(`Reconnected to room ${data.roomId}`);
+  });
+
+  socket.on('room_state', (room) => {
+    handlePhaseChange(room.phase, room);
+  });
+
+  socket.on('phase_change', (data: { newPhase: string }) => {
+    handlePhaseChange(data.newPhase);
+  });
+
+  socket.on('coaching_echo', (data: { content: string; timestamp: number }) => {
+    window.dispatchEvent(new CustomEvent('coaching-echo', { detail: data }));
+  });
+
+  socket.on('economy_update', (data: { money: Record<string, number>; roundResult: unknown }) => {
+    window.dispatchEvent(new CustomEvent('economy-update', { detail: data }));
+  });
+
+  socket.on('purchase_result', (result: { success: boolean; message: string }) => {
+    window.dispatchEvent(new CustomEvent('purchase-result', { detail: result }));
+  });
+
+  socket.on('error', (data: { message: string }) => {
+    alert(`Error: ${data.message}`);
+  });
+
+  socket.on('disconnect', () => {
+    console.log('Disconnected');
+    const app = document.getElementById('app')!;
+    app.innerHTML = '<p style="text-align:center;padding:40px;">Disconnected. Refresh to reconnect.</p>';
+  });
+
+  return socket;
+}
+
+function handlePhaseChange(phase: string, room?: unknown) {
+  const app = document.getElementById('app')!;
+
+  switch (phase) {
+    case 'lobby':
+      app.innerHTML = '<p style="text-align:center;padding:40px;">Waiting for opponent...</p>';
+      break;
+    case 'coaching':
+      renderCoachingScreen(app, currentRoomId, currentPlayerId, socket);
+      break;
+    case 'simulating':
+      renderWatchingScreen(app, 'Simulating battle...');
+      break;
+    case 'playback':
+      renderWatchingScreen(app, '¡Fight in progress! Watch the main screen.');
+      break;
+    case 'shop':
+      renderShopScreen(app, currentRoomId, currentPlayerId, socket);
+      break;
+    case 'ended':
+      app.innerHTML = '<p style="text-align:center;padding:40px;">Match ended!</p>';
+      break;
+  }
+}
+
+export function getSocket() {
+  return socket;
+}
+
+export function getRoomId() {
+  return currentRoomId;
+}
+
+export function getPlayerId() {
+  return currentPlayerId;
+}
