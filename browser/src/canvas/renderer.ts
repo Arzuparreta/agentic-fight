@@ -16,9 +16,13 @@ interface AgentVisual {
   hp: number;
   maxHp: number;
   flipH: boolean;
+  facingAngle: number;
   flashTime: number;
+  flashColor: string;
   popupText: string | null;
   popupTimer: number;
+  attackPhase: string | null;
+  counterWindow: boolean;
 }
 
 export class Renderer {
@@ -59,9 +63,13 @@ export class Renderer {
         hp: cfg.hp,
         maxHp: cfg.maxHp,
         flipH: false,
+        facingAngle: cfg.position.x < ARENA.width / 2 ? 0 : Math.PI,
         flashTime: 0,
+        flashColor: '#ff0000',
         popupText: null,
         popupTimer: 0,
+        attackPhase: null,
+        counterWindow: false,
       });
     }
   }
@@ -90,37 +98,78 @@ export class Renderer {
             if (newPos) {
               agent.targetPosition = { ...newPos };
             }
+            const facing = ev.payload.facing as number | undefined;
+            if (facing !== undefined) {
+              agent.facingAngle = facing;
+            }
             const other = this.getOtherAgent(agent.id);
             if (other) {
               agent.flipH = agent.targetPosition.x > other.targetPosition.x;
             }
+          }
+          break;
+        }
+        case 'dodge_start': {
+          if (agent) {
+            const newPos = ev.payload.position as Vec2 | undefined;
+            if (newPos) agent.targetPosition = { ...newPos };
+            agent.flashTime = 10;
+            agent.flashColor = '#00ccff';
+            agent.popupText = 'Dodge!';
+            agent.popupTimer = 18;
             this.audio.playMove();
           }
           break;
         }
-        case 'dodge': {
+        case 'dodge_end': {
           if (agent) {
-            const newPos = ev.payload.newPosition as Vec2 | undefined;
-            if (newPos) {
-              agent.targetPosition = { ...newPos };
-            }
-            const other = this.getOtherAgent(agent.id);
-            if (other) {
-              agent.flipH = agent.targetPosition.x > other.targetPosition.x;
-            }
-            agent.flashTime = 8;
-            agent.popupText = 'Dodge!';
-            agent.popupTimer = 15;
+            agent.flashTime = 0;
+          }
+          break;
+        }
+        case 'windup': {
+          if (agent) {
+            agent.attackPhase = 'windup';
+            agent.flashTime = 6;
+            agent.flashColor = '#ffffff';
+            const move = ev.payload.move as string;
+            agent.popupText = move === 'basic_attack' ? 'Ataque!' : move;
+            agent.popupTimer = 20;
+          }
+          break;
+        }
+        case 'attack_active': {
+          if (agent) {
+            agent.attackPhase = 'active';
+            agent.flashTime = 4;
+            agent.flashColor = '#ffaa00';
+            this.audio.playAttack();
           }
           break;
         }
         case 'attack': {
-          const attacker = this.agents.get(ev.agentId);
-          if (attacker) {
-            const move = ev.payload.move as string;
-            attacker.popupText = move === 'basic_attack' ? 'Ataque!' : move;
-            attacker.popupTimer = 30;
-            this.audio.playAttack();
+          // Hit confirmed
+          break;
+        }
+        case 'recovery':
+        case 'whiff': {
+          if (agent) {
+            agent.attackPhase = ev.type;
+            agent.flashTime = 5;
+            agent.flashColor = ev.type === 'whiff' ? '#ff4444' : '#ff8800';
+            if (ev.type === 'whiff') {
+              agent.popupText = 'Whiff!';
+              agent.popupTimer = 15;
+            }
+          }
+          break;
+        }
+        case 'counter_window': {
+          const target = this.agents.get(ev.agentId);
+          if (target) {
+            target.counterWindow = true;
+            target.flashTime = 8;
+            target.flashColor = '#00ff66';
           }
           break;
         }
@@ -130,9 +179,12 @@ export class Renderer {
             if (dodged) {
               agent.popupText = 'Dodged!';
               agent.popupTimer = 20;
+              agent.flashTime = 6;
+              agent.flashColor = '#00ccff';
             } else {
               agent.hp = (ev.payload.hpRemaining as number) ?? agent.hp;
               agent.flashTime = 10;
+              agent.flashColor = '#ff0000';
               this.audio.playHit();
             }
           }
@@ -150,11 +202,16 @@ export class Renderer {
         case 'death': {
           if (agent) {
             agent.hp = 0;
+            agent.attackPhase = null;
             this.audio.playDeath();
           }
           break;
         }
         case 'idle':
+          if (agent) {
+            agent.attackPhase = null;
+            agent.counterWindow = false;
+          }
           break;
       }
     }
@@ -182,18 +239,19 @@ export class Renderer {
     for (const agent of this.agents.values()) {
       const dx = agent.targetPosition.x - agent.position.x;
       const dy = agent.targetPosition.y - agent.position.y;
-      const isDodgeFlash = agent.flashTime > 0 && agent.popupText === 'Dodge!';
-      const lerp = isDodgeFlash ? 0.5 : 0.3;
+
+      // Smooth lerp for all movement (physics-based, so positions change every tick)
+      const lerp = 0.45;
 
       if (this.snapToEvent) {
         agent.position = { ...agent.targetPosition };
       } else {
-        if (Math.abs(dx) > 0.5) {
+        if (Math.abs(dx) > 0.3) {
           agent.position.x += dx * lerp;
         } else {
           agent.position.x = agent.targetPosition.x;
         }
-        if (Math.abs(dy) > 0.5) {
+        if (Math.abs(dy) > 0.3) {
           agent.position.y += dy * lerp;
         } else {
           agent.position.y = agent.targetPosition.y;
@@ -203,6 +261,7 @@ export class Renderer {
       if (agent.flashTime > 0) agent.flashTime--;
       if (agent.popupTimer > 0) agent.popupTimer--;
       if (agent.popupTimer <= 0) agent.popupText = null;
+      if (agent.counterWindow && agent.flashTime <= 0) agent.counterWindow = false;
     }
   }
 
@@ -273,10 +332,36 @@ export class Renderer {
     this.ctx.ellipse(screenX, screenY + spriteHeight * 0.4, spriteWidth * 0.35, 5, 0, 0, Math.PI * 2);
     this.ctx.fill();
 
+    // Attack phase ring
+    if (agent.attackPhase) {
+      this.ctx.save();
+      this.ctx.globalAlpha = 0.4;
+      this.ctx.strokeStyle =
+        agent.attackPhase === 'windup' ? '#ffffff' :
+        agent.attackPhase === 'active' ? '#ffaa00' :
+        agent.attackPhase === 'whiff' ? '#ff4444' : '#ff8800';
+      this.ctx.lineWidth = 3;
+      this.ctx.beginPath();
+      this.ctx.arc(screenX, screenY, spriteWidth * 0.55, 0, Math.PI * 2);
+      this.ctx.stroke();
+      this.ctx.restore();
+    }
+
+    // Counter window glow
+    if (agent.counterWindow) {
+      this.ctx.save();
+      this.ctx.globalAlpha = 0.25;
+      this.ctx.fillStyle = '#00ff66';
+      this.ctx.beginPath();
+      this.ctx.arc(screenX, screenY, spriteWidth * 0.7, 0, Math.PI * 2);
+      this.ctx.fill();
+      this.ctx.restore();
+    }
+
     if (agent.flashTime > 0) {
       this.ctx.save();
       this.ctx.globalAlpha = agent.flashTime / 10;
-      this.ctx.fillStyle = '#ff0000';
+      this.ctx.fillStyle = agent.flashColor;
       this.ctx.fillRect(drawX - 5, drawY - 5, spriteWidth + 10, spriteHeight + 10);
       this.ctx.restore();
     }

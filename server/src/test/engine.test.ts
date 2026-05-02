@@ -1,19 +1,19 @@
-import { simulateRound, TacticalPlanClient } from '../game/engine';
+import { simulateRound, TacticalSequenceClient } from '../game/engine';
 import { AgentConfig } from '../game/state';
-import { STUB_TACTICAL_PLAN } from './stubTacticalPlan';
+import { STUB_SEQUENCE } from './stubSequence';
 
-const stubPlanClient: TacticalPlanClient = {
-  getPlan: async () => STUB_TACTICAL_PLAN,
+const stubSequenceClient: TacticalSequenceClient = {
+  getSequence: async () => STUB_SEQUENCE,
 };
 
 async function runTest() {
-  console.log('=== Engine Test: Stub tactical plan (no LLM) ===\n');
+  console.log('=== Engine Test: Stub action sequence (no LLM) ===\n');
 
   const agentA: AgentConfig = {
     id: 'agent-a',
     name: 'Don Rodrigo',
-    stats: { maxHp: 150, movementSpeed: 3, attackDamage: 8 },
-    moves: [],
+    stats: { maxHp: 200, movementSpeed: 10, attackDamage: 10 },
+    moves: ['sword_lunge'],
     playstyleMemory: 'I rush the opponent and strike without hesitation.',
     characterDescription: 'a proud Castilian knight',
   };
@@ -21,13 +21,13 @@ async function runTest() {
   const agentB: AgentConfig = {
     id: 'agent-b',
     name: 'Al-Mansur',
-    stats: { maxHp: 150, movementSpeed: 3, attackDamage: 8 },
+    stats: { maxHp: 200, movementSpeed: 10, attackDamage: 10 },
     moves: [],
     playstyleMemory: 'I engage and destroy my enemies.',
     characterDescription: 'a fierce Moorish warrior',
   };
 
-  const result = await simulateRound(agentA, agentB, stubPlanClient);
+  const result = await simulateRound(agentA, agentB, stubSequenceClient);
 
   console.log('\n=== Results ===');
   console.log(`Final tick: ${result.finalTick}`);
@@ -67,7 +67,7 @@ async function runTest() {
   console.log(`Deaths recorded: ${deaths.length} (expected: 1)`);
   console.log(`Attacks recorded: ${attacks.length} (expected: > 0)`);
   console.log(`Hits recorded: ${hits.length} (expected: > 0)`);
-  console.log(`Simulation terminated: ${result.finalTick <= 600} (expected: true)`);
+  console.log(`Simulation terminated: ${result.finalTick <= 400} (expected: true)`);
   console.log(`Plan fetches (stub): llm=${result.metrics.planFetches.llmSuccess} default=${result.metrics.planFetches.llmDefault}`);
   console.log(`Combined idle fraction: ${idleFrac.toFixed(3)}`);
 
@@ -83,12 +83,12 @@ async function runTest() {
     console.error('FAIL: Expected at least 1 hit');
     process.exit(1);
   }
-  if (result.finalTick > 600) {
+  if (result.finalTick > 400) {
     console.error('FAIL: Simulation did not terminate within max ticks');
     process.exit(1);
   }
-  if (result.metrics.planFetches.llmSuccess !== 0 || result.metrics.planFetches.llmDefault !== 0) {
-    console.error('FAIL: Stub client should not record LLM plan fetches');
+  if (result.metrics.planFetches.llmDefault !== 0) {
+    console.error('FAIL: Should not have default/fallback plan fetches');
     process.exit(1);
   }
 

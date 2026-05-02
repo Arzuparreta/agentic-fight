@@ -1,14 +1,12 @@
 import {
   AgentState,
   GameState,
-  SimEvent,
   Stats,
   ARENA,
   MAX_TICKS_PER_ROUND,
   STARTING_HP,
-  MOVEMENT_SPEED,
-  Vec2,
 } from '@shared/index';
+import { createDefaultPhysics } from './physics';
 
 export interface AgentConfig {
   id: string;
@@ -20,10 +18,17 @@ export interface AgentConfig {
 }
 
 export function createInitialState(agentA: AgentConfig, agentB: AgentConfig): GameState {
+  const aPhys = createDefaultPhysics(agentA.stats);
+  aPhys.position = { x: Math.floor(ARENA.width * 0.25), y: Math.floor(ARENA.height * 0.5) };
+  aPhys.facingAngle = 0;
+
+  const bPhys = createDefaultPhysics(agentB.stats);
+  bPhys.position = { x: Math.floor(ARENA.width * 0.75), y: Math.floor(ARENA.height * 0.5) };
+  bPhys.facingAngle = Math.PI;
+
   const a: AgentState = {
     id: agentA.id,
     name: agentA.name,
-    position: { x: Math.floor(ARENA.width * 0.25), y: Math.floor(ARENA.height * 0.5) },
     hp: agentA.stats.maxHp,
     maxHp: agentA.stats.maxHp,
     stats: agentA.stats,
@@ -31,17 +36,26 @@ export function createInitialState(agentA: AgentConfig, agentB: AgentConfig): Ga
     moves: agentA.moves,
     statusEffects: [],
     status: 'alive',
+    physics: aPhys,
     dodgeCooldown: 0,
-    invincibleUntilTick: 0,
+    dodgeInvincibleUntilTick: 0,
     isDodging: false,
     dodgeDirection: null,
+    attackState: {
+      phase: 'idle',
+      moveId: null,
+      ticksInPhase: 0,
+      hasHit: false,
+      facingAtStart: 0,
+    },
+    sequenceExecution: null,
+    lastPlanTick: -999,
     facingAngle: 0,
   };
 
   const b: AgentState = {
     id: agentB.id,
     name: agentB.name,
-    position: { x: Math.floor(ARENA.width * 0.75), y: Math.floor(ARENA.height * 0.5) },
     hp: agentB.stats.maxHp,
     maxHp: agentB.stats.maxHp,
     stats: agentB.stats,
@@ -49,10 +63,20 @@ export function createInitialState(agentA: AgentConfig, agentB: AgentConfig): Ga
     moves: agentB.moves,
     statusEffects: [],
     status: 'alive',
+    physics: bPhys,
     dodgeCooldown: 0,
-    invincibleUntilTick: 0,
+    dodgeInvincibleUntilTick: 0,
     isDodging: false,
     dodgeDirection: null,
+    attackState: {
+      phase: 'idle',
+      moveId: null,
+      ticksInPhase: 0,
+      hasHit: false,
+      facingAtStart: Math.PI,
+    },
+    sequenceExecution: null,
+    lastPlanTick: -999,
     facingAngle: Math.PI,
   };
 
@@ -61,6 +85,7 @@ export function createInitialState(agentA: AgentConfig, agentB: AgentConfig): Ga
     maxTicks: MAX_TICKS_PER_ROUND,
     agents: { [a.id]: a, [b.id]: b },
     eventLog: [],
+    whiffWindows: {},
   };
 }
 
@@ -80,8 +105,8 @@ export function advanceCooldowns(state: GameState): void {
     if (agent.dodgeCooldown > 0) {
       agent.dodgeCooldown--;
     }
-    agent.isDodging = false;
-    agent.dodgeDirection = null;
+    // isDodging is managed by the engine loop based on dodgeInvincibleUntilTick
+    // agent.isDodging = false;
     agent.statusEffects = agent.statusEffects.filter((se) => {
       se.remainingTicks--;
       return se.remainingTicks > 0;
