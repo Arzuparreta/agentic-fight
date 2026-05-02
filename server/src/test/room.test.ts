@@ -1,9 +1,9 @@
 import { RoomManager } from '../rooms/manager';
-import { TacticalPlanClient } from '../game/engine';
-import { STUB_TACTICAL_PLAN } from './stubTacticalPlan';
+import { TacticalSequenceClient } from '../game/engine';
+import { STUB_SEQUENCE } from './stubSequence';
 
-const stubPlanClient: TacticalPlanClient = {
-  getPlan: async () => STUB_TACTICAL_PLAN,
+const stubSequenceClient: TacticalSequenceClient = {
+  getSequence: async () => STUB_SEQUENCE,
 };
 
 async function runTests() {
@@ -71,7 +71,7 @@ async function runTests() {
   }
 
   console.log('\nTest 5: Run simulation');
-  const simResult = await manager.runSimulation(room.id, stubPlanClient);
+  const simResult = await manager.runSimulation(room.id, stubSequenceClient);
   if ('error' in simResult) {
     console.error('FAIL: Test 5', simResult.error);
     process.exit(1);

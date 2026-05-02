@@ -33,10 +33,84 @@ export interface PlaystyleProfile {
   directives: string[];
 }
 
+/* ──────────────── Attack Frame Data ──────────────── */
+
+export interface AttackProfile {
+  windupTicks: number;
+  activeTicks: number;
+  recoveryTicks: number;
+  canMoveDuringWindup: boolean;
+  windupMoveSpeedMult: number;   // multiplier to maxSpeed during windup
+  canMoveDuringRecovery: boolean;
+  recoveryMoveSpeedMult: number; // multiplier during recovery
+  whiffRecoveryExtraTicks: number; // extra recovery if attack misses
+}
+
+export type AttackPhase = 'idle' | 'windup' | 'active' | 'recovery' | 'whiff';
+
+export interface AttackState {
+  phase: AttackPhase;
+  moveId: string | null;
+  ticksInPhase: number;
+  hasHit: boolean;
+  facingAtStart: number; // angle when attack began
+}
+
+/* ──────────────── Physics ──────────────── */
+
+export interface AgentPhysics {
+  position: Vec2;
+  velocity: Vec2;
+  maxSpeed: number;
+  acceleration: number;
+  friction: number;
+  turnSpeed: number;
+  facingAngle: number;
+}
+
+/* ──────────────── Action Sequences ──────────────── */
+
+export type MacroAction =
+  | 'approach'
+  | 'circle_left'
+  | 'circle_right'
+  | 'feint_approach'
+  | 'bait'
+  | 'dodge'
+  | 'attack'
+  | 'retreat'
+  | 'shield_up'
+  | 'wait'
+  | 'kite'
+  | 'punish'
+  | 'dodge_and_counter'
+  | 'rushdown';
+
+export interface SequenceAction {
+  macro: MacroAction;
+  duration?: number;       // ticks to commit; undefined = macro default
+  moveId?: string;         // for attack / shield_up macros
+  directionHint?: string;  // "left", "back_right", etc. — optional guidance
+}
+
+export interface ActionSequence {
+  actions: SequenceAction[];
+  interruptConditions: string[];
+  strategy: string;
+  reasoning: string;
+}
+
+export interface SequenceExecution {
+  sequence: ActionSequence;
+  currentActionIndex: number;
+  ticksInCurrentAction: number;
+}
+
+/* ──────────────── Agent & Game State ──────────────── */
+
 export interface AgentState {
   id: string;
   name: string;
-  position: Vec2;
   hp: number;
   maxHp: number;
   stats: Stats;
@@ -44,10 +118,24 @@ export interface AgentState {
   moves: string[];
   statusEffects: StatusEffect[];
   status: 'alive' | 'dead';
+
+  // Physics (new)
+  physics: AgentPhysics;
+
+  // Dodge (refactored)
   dodgeCooldown: number;
-  invincibleUntilTick: number;
+  dodgeInvincibleUntilTick: number;
   isDodging: boolean;
   dodgeDirection: DodgeDirection | null;
+
+  // Attack frames (new)
+  attackState: AttackState;
+
+  // Behavior (new)
+  sequenceExecution: SequenceExecution | null;
+  lastPlanTick: number;
+
+  // Legacy facing kept for renderer compat during transition
   facingAngle: number;
 }
 
@@ -56,12 +144,30 @@ export interface GameState {
   maxTicks: number;
   agents: Record<string, AgentState>;
   eventLog: SimEvent[];
+  // Global combat state for whiff windows
+  whiffWindows: Record<string, { untilTick: number; moveId: string; fromAgentId: string }>;
 }
 
 export interface SimEvent {
   tick: number;
   agentId: string;
-  type: 'move' | 'attack' | 'special' | 'hit' | 'death' | 'idle' | 'dodge' | 'move_diagonal';
+  type:
+    | 'move'
+    | 'attack'
+    | 'special'
+    | 'hit'
+    | 'death'
+    | 'idle'
+    | 'dodge'
+    | 'move_diagonal'
+    | 'windup'
+    | 'attack_active'
+    | 'recovery'
+    | 'whiff'
+    | 'counter_window'
+    | 'turn'
+    | 'dodge_start'
+    | 'dodge_end';
   payload: Record<string, unknown>;
 }
 
@@ -156,6 +262,8 @@ export interface RoundSummary {
   whatWorked: string[];
   whatDidNotWork: string[];
 }
+
+/* ──────────────── Legacy Tactical Plan types (kept for compat during refactor) ──────────────── */
 
 export type MovementPattern =
   | 'approach_direct'

@@ -1,6 +1,6 @@
 import { Room, RoomPlayer, SimEvent, RoundResult, CoachingMessage, STARTING_MONEY, PlaystyleProfile, RoundSummary } from '@shared/index';
 import { AgentConfig } from '../game/state';
-import { simulateRound, PlanClient } from '../game/engine';
+import { simulateRound, TacticalSequenceClient } from '../game/engine';
 import { calculateEarnings, EconomyState } from '../game/economy';
 import { purchaseItem } from '../game/shop';
 import { synthesizePlaystyle, CoachingContext, generateAgentOpeningMessage, generateAgentResponse, generateRoundSummary } from '../llm/ollama';
@@ -30,7 +30,7 @@ function createRoomPlayer(
     role,
     agentName: agentName || `Agent ${socketId.slice(0, 4)}`,
     characterDescription: characterDescription || 'a mysterious fighter',
-    stats: { maxHp: 150, movementSpeed: 3, attackDamage: 8 },
+    stats: { maxHp: 200, movementSpeed: 10, attackDamage: 10 },
     moves: [],
     money: STARTING_MONEY,
     coachingMessages: [],
@@ -42,9 +42,6 @@ function createRoomPlayer(
 }
 
 function buildCoachingContext(player: RoomPlayer, room: Room): CoachingContext {
-  const ownedMoves = player.moves.filter(m => MOVE_CATALOG[m]?.type === 'move');
-  const ownedBoosts = player.moves.filter(m => MOVE_CATALOG[m]?.type === 'boost');
-
   let lastRoundResult: CoachingContext['lastRoundResult'];
   if (room.roundHistory.length > 0) {
     const last = room.roundHistory[room.roundHistory.length - 1];
@@ -59,9 +56,6 @@ function buildCoachingContext(player: RoomPlayer, room: Room): CoachingContext {
   return {
     agentName: player.agentName,
     characterDescription: player.characterDescription,
-    money: player.money,
-    ownedMoves,
-    ownedBoosts,
     lastRoundResult,
     opponentCharacter: opponent?.characterDescription,
     roundNumber: room.currentRound,
@@ -314,7 +308,7 @@ export class RoomManager {
 
   async runSimulation(
     roomId: string,
-    planClient?: PlanClient
+    sequenceClient?: TacticalSequenceClient
   ): Promise<{ room: Room; result: RoundResult } | { error: string }> {
     const room = this.getRoom(roomId);
     if (!room) return { error: 'Room not found.' };
@@ -344,7 +338,7 @@ export class RoomManager {
     };
 
     console.log(`[Room ${roomId}] Running simulation for round ${room.currentRound}`);
-    const simResult = await simulateRound(agentA, agentB, planClient);
+    const simResult = await simulateRound(agentA, agentB, sequenceClient);
 
     room.eventLog = simResult.eventLog;
 

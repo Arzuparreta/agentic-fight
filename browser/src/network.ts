@@ -138,36 +138,32 @@ function startPlayback(eventLog: SimEvent[], _roundResult: RoundResult) {
 
   for (const id of agentIds) {
     let position: Vec2 = { x: ARENA.width * 0.25, y: ARENA.height * 0.5 };
-    let hp = 150;
-    let maxHp = 150;
+    let hp = 200;
+    let maxHp = 200;
     const playerInfo = roomPlayers[id];
     let name = playerInfo?.name || id;
     let description = playerInfo?.characterDescription || 'a fighter';
 
     for (const ev of eventLog) {
-      if (ev.agentId === id && ev.type === 'move' && ev.payload.newPosition !== undefined) {
-        const pos = ev.payload.newPosition as Vec2;
-        if (pos.x !== undefined && pos.y !== undefined) {
+      if (ev.agentId === id && ev.type === 'move') {
+        const pos = ev.payload.newPosition as Vec2 | undefined;
+        if (pos && pos.x !== undefined && pos.y !== undefined) {
           position = pos;
         }
-        break;
+        const evHp = ev.payload.hp as number | undefined;
+        const evMaxHp = ev.payload.maxHp as number | undefined;
+        if (evHp !== undefined) hp = evHp;
+        if (evMaxHp !== undefined) maxHp = evMaxHp;
+        break; // tick 0 move event has initial state
       }
     }
 
-    for (const ev of eventLog) {
-      if (ev.agentId === id && ev.type === 'hit') {
-        const remaining = ev.payload.hpRemaining as number;
-        if (remaining !== undefined) {
-          hp = remaining;
-        }
-      }
-    }
-
-    agentConfigs.push({ id, name, description, position, hp: maxHp, maxHp });
+    agentConfigs.push({ id, name, description, position, hp, maxHp });
   }
 
   renderer.setAgents(agentConfigs);
-  renderer.setMaxTicks(600);
+  const maxTick = eventLog.length > 0 ? Math.max(...eventLog.map((e) => e.tick)) : 600;
+  renderer.setMaxTicks(maxTick);
   renderer.setTick(0);
   renderer.setSnapToEvent(true);
 

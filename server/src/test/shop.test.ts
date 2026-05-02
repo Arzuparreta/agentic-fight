@@ -9,7 +9,7 @@ function createTestPlayer(id: string, money: number, moves: string[] = [], stats
     role: 'mobile',
     agentName: id,
     characterDescription: 'a test fighter',
-    stats: { maxHp: 150, movementSpeed: 3, attackDamage: 8, ...stats },
+    stats: { maxHp: 200, movementSpeed: 10, attackDamage: 10, ...stats },
     moves,
     money,
     coachingMessages: [],
@@ -56,9 +56,9 @@ function runTests() {
   const p4 = createTestPlayer('p4', 1000);
   const r4 = purchaseItem(p4, 'hp_boost');
   console.log(`  Result: ${r4.success} — ${r4.message}`);
-  console.log(`  HP: ${p4.stats.maxHp} (expected: 170)`);
+  console.log(`  HP: ${p4.stats.maxHp} (expected: 220)`);
   console.log(`  Money left: ${p4.money} (expected: 700)`);
-  if (!r4.success || p4.stats.maxHp !== 170 || p4.money !== 700) {
+  if (!r4.success || p4.stats.maxHp !== 220 || p4.money !== 700) {
     console.error('FAIL: Test 4');
     process.exit(1);
   }
