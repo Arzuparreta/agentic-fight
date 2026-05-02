@@ -1,23 +1,9 @@
 import { RoomManager } from '../rooms/manager';
-import { PlanClient } from '../game/engine';
+import { TacticalPlanClient } from '../game/engine';
+import { STUB_TACTICAL_PLAN } from './stubTacticalPlan';
 
-const dummyPlanClient: PlanClient = {
-  getPlan: async (agent, opponent) => {
-    const dx = agent.position.x - opponent.position.x;
-    const dy = agent.position.y - opponent.position.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    const onCooldown = (agent.cooldowns['basic_attack'] ?? 0) > 0;
-
-    if (dist <= 80 && !onCooldown) {
-      return { plan: 'attack', preferredMove: 'basic_attack', reasoning: 'In range, striking!' };
-    }
-
-    if (dist <= 80 && onCooldown) {
-      return { plan: 'approach', preferredMove: 'basic_attack', reasoning: 'Closing in while cooldown refreshes.' };
-    }
-
-    return { plan: 'approach', preferredMove: 'basic_attack', reasoning: 'Closing the distance.' };
-  },
+const stubPlanClient: TacticalPlanClient = {
+  getPlan: async () => STUB_TACTICAL_PLAN,
 };
 
 async function runIntegrationTest() {
@@ -69,7 +55,7 @@ async function runIntegrationTest() {
   console.log('  Memories set, phase forced to simulating');
 
   console.log('\nStep 6: Run simulation');
-  const simResult = await manager.runSimulation(roomId, dummyPlanClient);
+  const simResult = await manager.runSimulation(roomId, stubPlanClient);
   if ('error' in simResult) {
     console.error('FAIL:', simResult.error);
     process.exit(1);
@@ -157,7 +143,7 @@ async function runIntegrationTest() {
 
   console.log('\nStep 11: Run Round 2 simulation');
   room.phase = 'simulating';
-  const sim2 = await manager.runSimulation(roomId, dummyPlanClient);
+  const sim2 = await manager.runSimulation(roomId, stubPlanClient);
   if ('error' in sim2) {
     console.error('FAIL:', sim2.error);
     process.exit(1);

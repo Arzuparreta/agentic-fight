@@ -182,17 +182,19 @@ export class Renderer {
     for (const agent of this.agents.values()) {
       const dx = agent.targetPosition.x - agent.position.x;
       const dy = agent.targetPosition.y - agent.position.y;
+      const isDodgeFlash = agent.flashTime > 0 && agent.popupText === 'Dodge!';
+      const lerp = isDodgeFlash ? 0.5 : 0.3;
 
       if (this.snapToEvent) {
         agent.position = { ...agent.targetPosition };
       } else {
         if (Math.abs(dx) > 0.5) {
-          agent.position.x += dx * 0.3;
+          agent.position.x += dx * lerp;
         } else {
           agent.position.x = agent.targetPosition.x;
         }
         if (Math.abs(dy) > 0.5) {
-          agent.position.y += dy * 0.3;
+          agent.position.y += dy * lerp;
         } else {
           agent.position.y = agent.targetPosition.y;
         }

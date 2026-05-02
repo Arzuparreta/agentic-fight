@@ -7,10 +7,9 @@ import {
   MovementPattern,
   ParsedDirective,
   getMoveDef,
-  DODGE_COOLDOWN,
-  PLAN_INTERVAL,
   BASIC_ATTACK_RANGE,
 } from '@shared/index';
+import { tickRand } from './rng';
 
 function euclideanDistance(a: { x: number; y: number }, b: { x: number; y: number }): number {
   return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
@@ -70,6 +69,10 @@ export interface BehaviorContext {
   tendencies: OpponentTendencies;
   directives: ParsedDirective[];
   comboState: ComboState;
+  /** Coaching-derived weights (null if no profile). */
+  playstyle: PlaystyleParameters | null;
+  /** Committed left/right strafe direction for smoother circling. */
+  strafeSign: 1 | -1;
 }
 
 export interface ComboState {
@@ -136,31 +139,36 @@ function getAvailableDebuffMoves(agent: AgentState): string[] {
   });
 }
 
+function blendedAggression(ctx: BehaviorContext): number {
+  const p = ctx.playstyle?.aggressiveness ?? 50;
+  return ctx.plan.aggressionLevel * 0.55 + p * 0.45;
+}
+
 function getDistanceIntent(ctx: BehaviorContext): DistanceIntent {
   const { agent, distance, maxAttackRange, primaryAttackRange, plan, hpRatio, history, tick } = ctx;
-  const aggression = plan.aggressionLevel;
+  const aggression = blendedAggression(ctx);
+  const prefRange = ctx.playstyle?.preferred_range ?? 50;
 
   const recentActions = history.slice(-5).map((h) => h.action);
   const justAttacked = recentActions.some(
     (a) => a !== 'idle' && !a.startsWith('move_') && !a.startsWith('dodge_')
   );
-  const recentMoves = recentActions.filter((a) => a.startsWith('move_') || a.startsWith('dodge_'));
 
   const allAttacksOnCooldown = !isMoveOffCooldown(agent, 'basic_attack');
 
-  if (justAttacked && Math.random() < 0.4) {
+  if (justAttacked && tickRand(agent.id, tick, 11) < 0.4) {
     return 'retreat';
   }
 
-  if (hpRatio < 0.2 && Math.random() < 0.5) {
+  if (hpRatio < 0.2 && tickRand(agent.id, tick, 12) < 0.5) {
     return aggression > 60 ? 'close' : 'retreat';
   }
 
   if (allAttacksOnCooldown) {
     if (aggression > 70) {
-      return Math.random() < 0.6 ? 'close' : 'circle';
+      return tickRand(agent.id, tick, 13) < 0.6 ? 'close' : 'circle';
     }
-    return Math.random() < 0.4 ? 'circle' : 'retreat';
+    return tickRand(agent.id, tick, 14) < 0.4 ? 'circle' : 'retreat';
   }
 
   if (distance > maxAttackRange + 60) {
@@ -171,7 +179,7 @@ function getDistanceIntent(ctx: BehaviorContext): DistanceIntent {
     return 'maintain';
   }
 
-  if (Math.random() < 0.08) {
+  if (tickRand(agent.id, tick, 15) < 0.06 + prefRange / 500) {
     return 'retreat';
   }
 
@@ -207,10 +215,12 @@ function getBestAvailableAttack(ctx: BehaviorContext): string | null {
 }
 
 function shouldDodge(ctx: BehaviorContext): { dodge: boolean; direction?: string } {
-  const { agent, opponent, distance, plan } = ctx;
+  const { agent, opponent, distance, plan, tick } = ctx;
 
   if (agent.dodgeCooldown > 0) return { dodge: false };
-  if (plan.dodgeFrequency < 30) return { dodge: false };
+  const defensiveBoost = (ctx.playstyle?.defensiveness ?? 50) / 100;
+  const effectiveDodgeFreq = Math.min(100, plan.dodgeFrequency * (0.75 + defensiveBoost * 0.35));
+  if (effectiveDodgeFreq < 28) return { dodge: false };
 
   const oppMoves = [...Object.keys(opponent.cooldowns), ...opponent.moves].filter(
     (m, i, arr) => arr.indexOf(m) === i
@@ -223,12 +233,12 @@ function shouldDodge(ctx: BehaviorContext): { dodge: boolean; direction?: string
 
     const cd = opponent.cooldowns[moveId] ?? 0;
     if (cd <= 2 && distance <= def.range * 1.3) {
-      const dodgeChance = (plan.dodgeFrequency / 100) * 0.3;
-      if (Math.random() < dodgeChance) {
+      const dodgeChance = (effectiveDodgeFreq / 100) * 0.3;
+      if (tickRand(agent.id, tick, 21) < dodgeChance) {
         const dx = agent.position.x - opponent.position.x;
         const dy = agent.position.y - opponent.position.y;
         const angle = Math.atan2(dy, dx);
-        const perpAngle = angle + (Math.random() > 0.5 ? Math.PI / 2 : -Math.PI / 2);
+        const perpAngle = angle + (tickRand(agent.id, tick, 22) < 0.5 ? Math.PI / 2 : -Math.PI / 2);
         const dodgeDir = nearestDodgeAction(perpAngle);
         return { dodge: true, direction: dodgeDir };
       }
@@ -281,7 +291,7 @@ function nearestDodgeAction(angle: number): string {
 }
 
 function applyMovementIntent(intent: DistanceIntent, ctx: BehaviorContext): { action: string; reasoning: string } {
-  const { agent, opponent, distance, primaryAttackRange, plan } = ctx;
+  const { agent, opponent, distance, primaryAttackRange, tick } = ctx;
   const angle = angleBetween(agent.position, opponent.position);
   const retreatAngle = angle + Math.PI;
   const strafeAngleL = angle + Math.PI / 2;
@@ -289,28 +299,28 @@ function applyMovementIntent(intent: DistanceIntent, ctx: BehaviorContext): { ac
 
   switch (intent) {
     case 'close': {
-      const jitterAngle = angle + (Math.random() - 0.5) * 0.4;
+      const jitterAngle = angle + (tickRand(agent.id, tick, 31) - 0.5) * 0.4;
       return angleToMovement8(jitterAngle, 'Closing distance');
     }
     case 'retreat': {
-      const jitterAngle = retreatAngle + (Math.random() - 0.5) * 0.6;
+      const jitterAngle = retreatAngle + (tickRand(agent.id, tick, 32) - 0.5) * 0.6;
       return angleToMovement8(jitterAngle, 'Creating distance');
     }
     case 'circle': {
-      const dir = Math.random() > 0.5 ? strafeAngleL : strafeAngleR;
-      const jitterAngle = dir + (Math.random() - 0.5) * 0.3;
+      const dir = ctx.strafeSign > 0 ? strafeAngleL : strafeAngleR;
+      const jitterAngle = dir + (tickRand(agent.id, tick, 33) - 0.5) * 0.3;
       return angleToMovement8(jitterAngle, 'Circling opponent');
     }
     case 'maintain': {
       if (distance < primaryAttackRange - 10) {
-        const jitterAngle = retreatAngle + (Math.random() - 0.5) * 0.8;
+        const jitterAngle = retreatAngle + (tickRand(agent.id, tick, 34) - 0.5) * 0.8;
         return angleToMovement8(jitterAngle, 'Slightly backing off to attack range');
       }
       if (distance > primaryAttackRange + 20) {
-        const jitterAngle = angle + (Math.random() - 0.5) * 0.4;
+        const jitterAngle = angle + (tickRand(agent.id, tick, 35) - 0.5) * 0.4;
         return angleToMovement8(jitterAngle, 'Stepping into attack range');
       }
-      const dir = Math.random() > 0.5 ? strafeAngleL : strafeAngleR;
+      const dir = ctx.strafeSign > 0 ? strafeAngleL : strafeAngleR;
       return angleToMovement8(dir, 'Maintaining range, circling');
     }
   }
@@ -322,8 +332,8 @@ function performMovement(ctx: BehaviorContext): { action: string; reasoning: str
 
   switch (plan.movementPattern) {
     case 'approach_direct': {
-      if (Math.random() < 0.15) {
-        const sideAngle = angle + (Math.random() > 0.5 ? Math.PI / 3 : -Math.PI / 3);
+      if (tickRand(agent.id, tick, 41) < 0.15) {
+        const sideAngle = angle + (tickRand(agent.id, tick, 42) < 0.5 ? Math.PI / 3 : -Math.PI / 3);
         return angleToMovement8(sideAngle, 'Approaching with lateral step');
       }
       return applyMovementIntent(getDistanceIntent(ctx), ctx);
@@ -348,7 +358,7 @@ function performMovement(ctx: BehaviorContext): { action: string; reasoning: str
         return angleToMovement8(retreatAngle, 'Circling out from too close');
       }
 
-      if (Math.random() < 0.2) {
+      if (tickRand(agent.id, tick, 43) < 0.2) {
         const dipAngle = angle + direction * 0.3;
         return angleToMovement8(dipAngle, 'Circling dip inward');
       }
@@ -365,7 +375,7 @@ function performMovement(ctx: BehaviorContext): { action: string; reasoning: str
       const justAttacked = attackIndex >= 0 && attackIndex >= recentActions.length - 2;
 
       if (justAttacked) {
-        const retreatAngle = angle + Math.PI + (Math.random() - 0.5) * 0.5;
+        const retreatAngle = angle + Math.PI + (tickRand(agent.id, tick, 44) - 0.5) * 0.5;
         return angleToMovement8(retreatAngle, 'Hit and retreating');
       }
 
@@ -378,7 +388,7 @@ function performMovement(ctx: BehaviorContext): { action: string; reasoning: str
         if (attack) {
           return { action: attack, reasoning: 'Hit-and-retreat: attacking in range' };
         }
-        const strafeAngle = angle + Math.PI / 2 * (Math.random() > 0.5 ? 1 : -1);
+        const strafeAngle = angle + (Math.PI / 2) * ctx.strafeSign;
         return angleToMovement8(strafeAngle, 'Hit-and-retreat: circling while waiting for cooldown');
       }
 
@@ -392,7 +402,7 @@ function performMovement(ctx: BehaviorContext): { action: string; reasoning: str
       }
 
       if (distance > maxAttackRange + 30) {
-        const approachAngle = angle + (Math.random() - 0.5) * 0.3;
+        const approachAngle = angle + (tickRand(agent.id, tick, 45) - 0.5) * 0.3;
         return angleToMovement8(approachAngle, 'Approaching to bait counter');
       }
 
@@ -401,17 +411,17 @@ function performMovement(ctx: BehaviorContext): { action: string; reasoning: str
         if (attack) {
           return { action: attack, reasoning: 'Counter-attacking' };
         }
-        const strafeAngle = angle + Math.PI / 2 * (Math.random() > 0.5 ? 1 : -1);
+        const strafeAngle = angle + (Math.PI / 2) * ctx.strafeSign;
         return angleToMovement8(strafeAngle, 'Counter pattern: circling while on cooldown');
       }
 
-      const stepBack = angle + Math.PI + (Math.random() - 0.5) * 0.4;
+      const stepBack = angle + Math.PI + (tickRand(agent.id, tick, 46) - 0.5) * 0.4;
       return angleToMovement8(stepBack, 'Slightly retreating to ideal counter range');
     }
 
     case 'rush': {
-      if (ctx.hpRatio < 0.3 && Math.random() < 0.3) {
-        const retreatAngle = angle + Math.PI + (Math.random() - 0.5) * 0.3;
+      if (ctx.hpRatio < 0.3 && tickRand(agent.id, tick, 47) < 0.3) {
+        const retreatAngle = angle + Math.PI + (tickRand(agent.id, tick, 48) - 0.5) * 0.3;
         return angleToMovement8(retreatAngle, 'Rush: backing off at low HP');
       }
 
@@ -427,7 +437,7 @@ function performMovement(ctx: BehaviorContext): { action: string; reasoning: str
 
     case 'kite': {
       if (distance < primaryAttackRange && distance < 100) {
-        const retreatAngle = angle + Math.PI + (Math.random() - 0.5) * 0.5;
+        const retreatAngle = angle + Math.PI + (tickRand(agent.id, tick, 49) - 0.5) * 0.5;
         return angleToMovement8(retreatAngle, 'Kiting: creating distance');
       }
 
@@ -444,27 +454,27 @@ function performMovement(ctx: BehaviorContext): { action: string; reasoning: str
       }
 
       if (distance < maxAttackRange - 30) {
-        const retreatAngle = angle + Math.PI + (Math.random() - 0.5) * 0.6;
+        const retreatAngle = angle + Math.PI + (tickRand(agent.id, tick, 50) - 0.5) * 0.6;
         return angleToMovement8(retreatAngle, 'Kiting: too close, backing off');
       }
 
-      if (Math.random() < 0.1) {
+      if (tickRand(agent.id, tick, 51) < 0.1) {
         return applyMovementIntent('close', ctx);
       }
 
       const kitingRange = maxAttackRange + 30;
       if (distance > kitingRange + 40) {
-        const closeAngle = angle + (Math.random() - 0.5) * 0.3;
+        const closeAngle = angle + (tickRand(agent.id, tick, 52) - 0.5) * 0.3;
         return angleToMovement8(closeAngle, 'Kiting: repositioning closer');
       }
 
-      const strafeAngle = angle + Math.PI / 2 * (Math.random() > 0.5 ? 1 : -1);
+      const strafeAngle = angle + (Math.PI / 2) * ctx.strafeSign;
       return angleToMovement8(strafeAngle, 'Kiting: strafing at range');
     }
 
     case 'hold_position': {
       if (distance > maxAttackRange + 20) {
-        const closeAngle = angle + (Math.random() - 0.5) * 0.3;
+        const closeAngle = angle + (tickRand(agent.id, tick, 53) - 0.5) * 0.3;
         return angleToMovement8(closeAngle, 'Holding position: closing to range');
       }
 
@@ -473,11 +483,11 @@ function performMovement(ctx: BehaviorContext): { action: string; reasoning: str
         if (attack) {
           return { action: attack, reasoning: 'Holding position: attacking from range' };
         }
-        const strafeAngle = angle + Math.PI / 2 * (Math.random() > 0.5 ? 1 : -1);
+        const strafeAngle = angle + (Math.PI / 2) * ctx.strafeSign;
         return angleToMovement8(strafeAngle, 'Holding position: circling while on cooldown');
       }
 
-      const strafeAngle = angle + Math.PI / 2 * (Math.random() > 0.5 ? 1 : -1);
+      const strafeAngle = angle + (Math.PI / 2) * ctx.strafeSign;
       return angleToMovement8(strafeAngle, 'Holding position: repositioning');
     }
 
@@ -486,30 +496,30 @@ function performMovement(ctx: BehaviorContext): { action: string; reasoning: str
 
       if (feintPhase) {
         if (distance > maxAttackRange + 40) {
-          return angleToMovement8(angle + (Math.random() - 0.5) * 0.2, 'Feint: approaching');
+          return angleToMovement8(angle + (tickRand(agent.id, tick, 54) - 0.5) * 0.2, 'Feint: approaching');
         }
         if (distance <= primaryAttackRange) {
           const attack = getBestAvailableAttack(ctx);
           if (attack) {
             return { action: attack, reasoning: 'Feint: striking in close' };
           }
-          const sideAngle = angle + Math.PI / 2 * (Math.random() > 0.5 ? 1 : -1);
+          const sideAngle = angle + (Math.PI / 2) * ctx.strafeSign;
           return angleToMovement8(sideAngle, 'Feint: circling in close');
         }
-        return angleToMovement8(angle + (Math.random() - 0.5) * 0.5, 'Feint: closing remaining gap');
+        return angleToMovement8(angle + (tickRand(agent.id, tick, 55) - 0.5) * 0.5, 'Feint: closing remaining gap');
       } else {
         const dodgeResult = shouldDodge(ctx);
         if (dodgeResult.dodge && dodgeResult.direction) {
           return { action: dodgeResult.direction, reasoning: 'Feint: dodging after approach' };
         }
-        const perpAngle = angle + Math.PI / 2 * (Math.random() > 0.5 ? 1 : -1);
+        const perpAngle = angle + (Math.PI / 2) * ctx.strafeSign;
         return angleToMovement8(perpAngle, 'Feint: sidestepping');
       }
     }
 
     case 'retreat': {
       const retreatAngle = angle + Math.PI;
-      const jitterAngle = retreatAngle + (Math.random() - 0.5) * 0.6;
+      const jitterAngle = retreatAngle + (tickRand(agent.id, tick, 56) - 0.5) * 0.6;
       return angleToMovement8(jitterAngle, 'Retreating');
     }
 
@@ -580,7 +590,8 @@ function mapReactionToAction(reaction: ReactionOption, ctx: BehaviorContext, dis
       return 'idle';
     case 'dodge_close': {
       if (agent.dodgeCooldown > 0) return null;
-      const angle = angleBetween(opponent.position, agent.position) + (Math.random() - 0.5) * 1.0;
+      const angle =
+        angleBetween(opponent.position, agent.position) + (tickRand(agent.id, ctx.tick, 61) - 0.5) * 1.0;
       return nearestDodgeAction(angle);
     }
     case 'hold':
@@ -640,8 +651,9 @@ function tryCombo(ctx: BehaviorContext): string | null {
     }
   }
 
-  const comboPref = plan.aggressionLevel > 60 ? 70 : 30;
-  if (Math.random() * 100 > comboPref) return null;
+  const comboPref =
+    (plan.aggressionLevel > 60 ? 70 : 30) * (0.7 + ((ctx.playstyle?.combo_preference ?? 50) / 100) * 0.45);
+  if (tickRand(agent.id, ctx.tick, 62) * 100 > comboPref) return null;
 
   for (const [name, sequence] of Object.entries(COMBO_SEQUENCES)) {
     const canUse = sequence.every((move) => agent.moves.includes(move) || move === 'basic_attack');
@@ -663,16 +675,47 @@ function tryCombo(ctx: BehaviorContext): string | null {
 }
 
 export function chooseAction(ctx: BehaviorContext): { action: string; reasoning: string } {
-  const { agent, opponent, distance, plan, hpRatio, maxAttackRange, primaryAttackRange } = ctx;
+  const { agent, opponent, distance, plan, hpRatio, maxAttackRange, primaryAttackRange, tick } = ctx;
+
+  const ps = ctx.playstyle;
+  const aggBlend = blendedAggression(ctx) / 100;
+  const defBias = (ps?.defensiveness ?? 50) / 100;
+  const patience = (ps?.patience ?? 50) / 100;
+
+  const hesitateThreshold = Math.max(0, defBias * 0.35 - patience * 0.1);
+  const hesitateMelee =
+    aggBlend < 0.42 &&
+    defBias > 0.55 &&
+    distance <= primaryAttackRange &&
+    tickRand(agent.id, tick, 71) < hesitateThreshold;
+
+  const primaryEarly =
+    plan.primaryMove &&
+    plan.primaryMove !== 'basic_attack' &&
+    plan.primaryMove !== 'idle' &&
+    aggBlend < 0.48 &&
+    (plan.movementPattern === 'kite' ||
+      plan.movementPattern === 'hold_position' ||
+      plan.movementPattern === 'dodge_and_counter');
+
+  if (primaryEarly) {
+    const primaryDef = getMoveDef(plan.primaryMove);
+    if (primaryDef && isMoveOffCooldown(agent, plan.primaryMove)) {
+      const inRange = !primaryDef.range || distance <= primaryDef.range;
+      if (inRange && primaryDef.damage && primaryDef.damage > 0) {
+        return { action: plan.primaryMove, reasoning: `Primary (${plan.movementPattern}): ${plan.primaryMove}` };
+      }
+    }
+  }
 
   const bestAttack = getBestAvailableAttack(ctx);
-  if (bestAttack) {
+  if (bestAttack && !hesitateMelee) {
     return { action: bestAttack, reasoning: `Attacking with ${bestAttack}` };
   }
 
   if (isMoveOffCooldown(agent, 'basic_attack')) {
     const basicDef = getMoveDef('basic_attack');
-    if (basicDef && basicDef.range && distance <= basicDef.range) {
+    if (basicDef && basicDef.range && distance <= basicDef.range && !hesitateMelee) {
       return { action: 'basic_attack', reasoning: 'Using basic attack' };
     }
   }
@@ -723,7 +766,7 @@ export function chooseAction(ctx: BehaviorContext): { action: string; reasoning:
   }
 
   if (distance <= primaryAttackRange) {
-    const strafeAngle = angleBetween(agent.position, opponent.position) + Math.PI / 2 * (Math.random() > 0.5 ? 1 : -1);
+    const strafeAngle = angleBetween(agent.position, opponent.position) + (Math.PI / 2) * ctx.strafeSign;
     return angleToMovement8(strafeAngle, 'In range, circling while waiting for cooldowns');
   }
 
@@ -784,7 +827,9 @@ export function buildBehaviorContext(
   tick: number,
   maxTicks: number,
   directives: ParsedDirective[],
-  comboState: ComboState
+  comboState: ComboState,
+  playstyle: PlaystyleParameters | null,
+  strafeSign: 1 | -1
 ): BehaviorContext {
   const distance = euclideanDistance(agent.position, opponent.position);
   const maxAttackRange = getAgentMaxAttackRange(agent);
@@ -806,5 +851,7 @@ export function buildBehaviorContext(
     tendencies: analyzeOpponentTendencies(opponentHistory),
     directives,
     comboState,
+    playstyle,
+    strafeSign,
   };
 }

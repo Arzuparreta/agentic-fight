@@ -1,27 +1,13 @@
-import { simulateRound, PlanClient } from '../game/engine';
+import { simulateRound, TacticalPlanClient } from '../game/engine';
 import { AgentConfig } from '../game/state';
+import { STUB_TACTICAL_PLAN } from './stubTacticalPlan';
 
-const dummyPlanClient: PlanClient = {
-  getPlan: async (agent, opponent) => {
-    const dx = agent.position.x - opponent.position.x;
-    const dy = agent.position.y - opponent.position.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    const onCooldown = (agent.cooldowns['basic_attack'] ?? 0) > 0;
-
-    if (dist <= 80 && !onCooldown) {
-      return { plan: 'attack', preferredMove: 'basic_attack', reasoning: 'In range, striking!' };
-    }
-
-    if (dist <= 80 && onCooldown) {
-      return { plan: 'approach', preferredMove: 'basic_attack', reasoning: 'In range but on cooldown, holding position.' };
-    }
-
-    return { plan: 'approach', preferredMove: 'basic_attack', reasoning: 'Closing the distance.' };
-  },
+const stubPlanClient: TacticalPlanClient = {
+  getPlan: async () => STUB_TACTICAL_PLAN,
 };
 
 async function runTest() {
-  console.log('=== Engine Test: Smart Dummy Agents ===\n');
+  console.log('=== Engine Test: Stub tactical plan (no LLM) ===\n');
 
   const agentA: AgentConfig = {
     id: 'agent-a',
@@ -41,12 +27,13 @@ async function runTest() {
     characterDescription: 'a fierce Moorish warrior',
   };
 
-  const result = await simulateRound(agentA, agentB, dummyPlanClient);
+  const result = await simulateRound(agentA, agentB, stubPlanClient);
 
   console.log('\n=== Results ===');
   console.log(`Final tick: ${result.finalTick}`);
   console.log(`Winner: ${result.winnerId || 'draw'}`);
   console.log(`Total events: ${result.eventLog.length}`);
+  console.log('Metrics:', JSON.stringify(result.metrics, null, 2));
 
   console.log('\n=== Event Log (first 30) ===');
   for (const ev of result.eventLog.slice(0, 30)) {
@@ -72,11 +59,17 @@ async function runTest() {
   const attacks = result.eventLog.filter((e) => e.type === 'attack');
   const hits = result.eventLog.filter((e) => e.type === 'hit');
 
+  const mA = result.metrics.perAgent['agent-a'];
+  const mB = result.metrics.perAgent['agent-b'];
+  const idleFrac = (mA.idleTicks + mB.idleTicks) / Math.max(1, mA.totalTicks + mB.totalTicks);
+
   console.log('\n=== Assertions ===');
   console.log(`Deaths recorded: ${deaths.length} (expected: 1)`);
   console.log(`Attacks recorded: ${attacks.length} (expected: > 0)`);
   console.log(`Hits recorded: ${hits.length} (expected: > 0)`);
   console.log(`Simulation terminated: ${result.finalTick <= 600} (expected: true)`);
+  console.log(`Plan fetches (stub): llm=${result.metrics.planFetches.llmSuccess} default=${result.metrics.planFetches.llmDefault}`);
+  console.log(`Combined idle fraction: ${idleFrac.toFixed(3)}`);
 
   if (deaths.length !== 1) {
     console.error('FAIL: Expected exactly 1 death');
@@ -92,6 +85,10 @@ async function runTest() {
   }
   if (result.finalTick > 600) {
     console.error('FAIL: Simulation did not terminate within max ticks');
+    process.exit(1);
+  }
+  if (result.metrics.planFetches.llmSuccess !== 0 || result.metrics.planFetches.llmDefault !== 0) {
+    console.error('FAIL: Stub client should not record LLM plan fetches');
     process.exit(1);
   }
 

@@ -1,23 +1,9 @@
-import { simulateRound, PlanClient } from '../game/engine';
+import { simulateRound, TacticalPlanClient } from '../game/engine';
 import { AgentConfig } from '../game/state';
+import { STUB_TACTICAL_PLAN } from './stubTacticalPlan';
 
-const dummyPlanClient: PlanClient = {
-  getPlan: async (agent, opponent) => {
-    const dx = agent.position.x - opponent.position.x;
-    const dy = agent.position.y - opponent.position.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    const onCooldown = (agent.cooldowns['basic_attack'] ?? 0) > 0;
-
-    if (dist <= 80 && !onCooldown) {
-      return { plan: 'attack', preferredMove: 'basic_attack', reasoning: 'In range!' };
-    }
-
-    if (dist <= 80 && onCooldown) {
-      return { plan: 'approach', preferredMove: 'basic_attack', reasoning: 'In range but on cooldown.' };
-    }
-
-    return { plan: 'approach', preferredMove: 'basic_attack', reasoning: 'Closing distance.' };
-  },
+const stubPlanClient: TacticalPlanClient = {
+  getPlan: async () => STUB_TACTICAL_PLAN,
 };
 
 async function runBenchmark() {
@@ -42,7 +28,7 @@ async function runBenchmark() {
   };
 
   const start = performance.now();
-  const result = await simulateRound(agentA, agentB, dummyPlanClient);
+  const result = await simulateRound(agentA, agentB, stubPlanClient);
   const end = performance.now();
 
   const elapsed = end - start;
@@ -61,6 +47,9 @@ async function runBenchmark() {
   console.log(`Winner: ${result.winnerId || 'draw'}`);
   console.log(`Final tick: ${result.finalTick}`);
   console.log(`Total events: ${result.eventLog.length}`);
+  console.log(
+    `Idle ticks A/B: ${result.metrics.perAgent['agent-a'].idleTicks}/${result.metrics.perAgent['agent-a'].totalTicks} — ${result.metrics.perAgent['agent-b'].idleTicks}/${result.metrics.perAgent['agent-b'].totalTicks}`
+  );
   console.log(`LLM calls agent A: ${llmCallsA}`);
   console.log(`LLM calls agent B: ${llmCallsB}`);
   console.log(`Total LLM calls: ${llmCallsA + llmCallsB}`);

@@ -9,10 +9,11 @@ import {
   MOVE_CATALOG,
   TacticalPlan,
   TacticalReactions,
-  MovementPattern,
   ActionHistoryEntry,
   OpponentTendencies,
   RoundSummary,
+  VALID_MOVEMENT_PATTERNS,
+  VALID_REACTION_OPTIONS,
 } from '@shared/index';
 import { ActionHistoryEntry as BHActionHistoryEntry, analyzeOpponentTendencies } from '../game/behavior';
 
@@ -27,22 +28,31 @@ export interface AgentPlan {
   reasoning: string;
 }
 
-const VALID_MOVEMENT_PATTERNS: MovementPattern[] = [
-  'approach_direct',
-  'circle_strafe_left',
-  'circle_strafe_right',
-  'hit_and_retreat',
-  'dodge_and_counter',
-  'rush',
-  'kite',
-  'hold_position',
-  'feint_approach',
-  'retreat',
-];
+export type TacticalPlanSource = 'llm' | 'default' | 'retry_llm';
 
-const VALID_REACTION_OPTIONS = [
-  'retreat', 'rush', 'use_ranged', 'wait', 'dodge_close', 'hold', 'berserk', 'shield', 'kite',
-];
+export interface TacticalPlanCallResult {
+  plan: TacticalPlan;
+  source: TacticalPlanSource;
+  durationMs: number;
+  error?: string;
+}
+
+function defaultTacticalPlanFailure(reason: string): TacticalPlan {
+  return {
+    strategy: reason,
+    movementPattern: 'approach_direct',
+    primaryMove: 'basic_attack',
+    dodgeFrequency: 20,
+    aggressionLevel: 50,
+    reactions: {
+      ifOpponentShields: 'use_ranged',
+      ifOpponentRetreats: 'rush',
+      ifLowHP: 'berserk',
+      ifOpponentUsesRanged: 'dodge_close',
+    },
+    reasoning: 'LLM call failed, defaulting to basic approach.',
+  };
+}
 
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'gemma4:latest';
@@ -214,7 +224,7 @@ function validateTacticalPlan(parsed: any): TacticalPlan {
   const strategy = typeof parsed.strategy === 'string' ? parsed.strategy.trim() : defaultPlan.strategy;
   const reasoning = typeof parsed.reasoning === 'string' ? parsed.reasoning.trim() : defaultPlan.reasoning;
 
-  const movementPattern = VALID_MOVEMENT_PATTERNS.includes(parsed.movementPattern)
+  const movementPattern = (VALID_MOVEMENT_PATTERNS as readonly string[]).includes(parsed.movementPattern)
     ? parsed.movementPattern
     : defaultPlan.movementPattern;
 
@@ -229,13 +239,13 @@ function validateTacticalPlan(parsed: any): TacticalPlan {
     : defaultPlan.aggressionLevel;
 
   const reactions: TacticalReactions = {
-    ifOpponentShields: VALID_REACTION_OPTIONS.includes(parsed.reactions?.ifOpponentShields)
+    ifOpponentShields: (VALID_REACTION_OPTIONS as readonly string[]).includes(parsed.reactions?.ifOpponentShields)
       ? parsed.reactions.ifOpponentShields : defaultPlan.reactions.ifOpponentShields,
-    ifOpponentRetreats: VALID_REACTION_OPTIONS.includes(parsed.reactions?.ifOpponentRetreats)
+    ifOpponentRetreats: (VALID_REACTION_OPTIONS as readonly string[]).includes(parsed.reactions?.ifOpponentRetreats)
       ? parsed.reactions.ifOpponentRetreats : defaultPlan.reactions.ifOpponentRetreats,
-    ifLowHP: VALID_REACTION_OPTIONS.includes(parsed.reactions?.ifLowHP)
+    ifLowHP: (VALID_REACTION_OPTIONS as readonly string[]).includes(parsed.reactions?.ifLowHP)
       ? parsed.reactions.ifLowHP : defaultPlan.reactions.ifLowHP,
-    ifOpponentUsesRanged: VALID_REACTION_OPTIONS.includes(parsed.reactions?.ifOpponentUsesRanged)
+    ifOpponentUsesRanged: (VALID_REACTION_OPTIONS as readonly string[]).includes(parsed.reactions?.ifOpponentUsesRanged)
       ? parsed.reactions.ifOpponentUsesRanged : defaultPlan.reactions.ifOpponentUsesRanged,
   };
 
@@ -250,31 +260,25 @@ function validateTacticalPlan(parsed: any): TacticalPlan {
   };
 }
 
-export async function getTacticalPlan(
-  agent: AgentState,
-  opponent: AgentState,
-  state: GameState,
-  playstyleMemory: string,
-  characterDescription: string,
-  actionHistory: ActionHistoryEntry[],
-  opponentHistory: ActionHistoryEntry[],
-  roundSummaries: RoundSummary[],
-  errorContext?: string
-): Promise<TacticalPlan> {
-  const playstyleProfile: PlaystyleProfile | null = playstyleMemory
-    ? JSON.parse(playstyleMemory)
-    : null;
+function buildMinimalRetryPrompt(agent: AgentState, opponent: AgentState, state: GameState): string {
+  return `You output exactly one JSON object. No markdown or explanation outside JSON.
 
-  const tendencies = analyzeOpponentTendencies(opponentHistory);
+Required keys: strategy (string), movementPattern (string), primaryMove (string), dodgeFrequency (number 0-100), aggressionLevel (number 0-100), reasoning (string),
+reactions (object with ifOpponentShields, ifOpponentRetreats, ifLowHP, ifOpponentUsesRanged — each value a string).
 
-  const prompt = buildTacticalPrompt(
-    agent, opponent, state, playstyleProfile,
-    characterDescription, actionHistory, opponentHistory,
-    tendencies, roundSummaries, errorContext
-  );
+movementPattern MUST be exactly one of: ${VALID_MOVEMENT_PATTERNS.join(', ')}.
+Each reaction value MUST be exactly one of: ${VALID_REACTION_OPTIONS.join(', ')}.
+primaryMove: prefer basic_attack or a known special move id.
 
+Situation: tick ${state.tick}. You at (${Math.round(agent.position.x)},${Math.round(agent.position.y)}) HP ${agent.hp}/${agent.maxHp}. Opponent at (${Math.round(opponent.position.x)},${Math.round(opponent.position.y)}) HP ${opponent.hp}/${opponent.maxHp}.`;
+}
+
+async function generateTacticalPlanOnce(
+  prompt: string,
+  agentId: string
+): Promise<{ ok: true; raw: string } | { ok: false; error: string }> {
   try {
-    console.log(`[LLM] Requesting tactical plan for agent ${agent.id}...`);
+    console.log(`[LLM] Requesting tactical plan for agent ${agentId}...`);
     const res = await fetchWithTimeout(`${OLLAMA_URL}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -287,38 +291,124 @@ export async function getTacticalPlan(
     });
 
     if (!res.ok) {
-      throw new Error(`Ollama HTTP ${res.status}`);
+      return { ok: false, error: `Ollama HTTP ${res.status}` };
     }
 
     const data = await res.json();
-    const raw = data.response || '{}';
-    let parsed: any;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      throw new Error(`Failed to parse LLM response as JSON: ${raw.slice(0, 100)}`);
+    const raw = typeof data.response === 'string' ? data.response : '{}';
+    if (!raw.trim()) {
+      return { ok: false, error: 'Empty LLM response' };
     }
+    return { ok: true, raw };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, error: msg };
+  }
+}
 
-    const plan = validateTacticalPlan(parsed);
-    console.log(`[LLM] Tactical plan for ${agent.id}: ${plan.movementPattern} / ${plan.primaryMove} / agg:${plan.aggressionLevel} / dodge:${plan.dodgeFrequency}`);
-    return plan;
-  } catch (err) {
-    console.error(`[LLM] Error getting tactical plan for ${agent.id}:`, err);
+export async function getTacticalPlanWithTrace(
+  agent: AgentState,
+  opponent: AgentState,
+  state: GameState,
+  playstyleMemory: string,
+  characterDescription: string,
+  actionHistory: ActionHistoryEntry[],
+  opponentHistory: ActionHistoryEntry[],
+  roundSummaries: RoundSummary[],
+  errorContext?: string
+): Promise<TacticalPlanCallResult> {
+  const t0 = performance.now();
+
+  const playstyleProfile: PlaystyleProfile | null = playstyleMemory
+    ? JSON.parse(playstyleMemory)
+    : null;
+
+  const tendencies = analyzeOpponentTendencies(opponentHistory as BHActionHistoryEntry[]);
+
+  const prompt = buildTacticalPrompt(
+    agent, opponent, state, playstyleProfile,
+    characterDescription, actionHistory, opponentHistory,
+    tendencies, roundSummaries, errorContext
+  );
+
+  const first = await generateTacticalPlanOnce(prompt, agent.id);
+  if (!first.ok) {
+    const durationMs = performance.now() - t0;
     return {
-      strategy: 'Default strategy due to LLM error.',
-      movementPattern: 'approach_direct',
-      primaryMove: 'basic_attack',
-      dodgeFrequency: 20,
-      aggressionLevel: 50,
-      reactions: {
-        ifOpponentShields: 'use_ranged',
-        ifOpponentRetreats: 'rush',
-        ifLowHP: 'berserk',
-        ifOpponentUsesRanged: 'dodge_close',
-      },
-      reasoning: 'LLM call failed, defaulting to basic approach.',
+      plan: defaultTacticalPlanFailure('Default strategy due to LLM error.'),
+      source: 'default',
+      durationMs,
+      error: first.error,
     };
   }
+
+  try {
+    const parsed = JSON.parse(first.raw);
+    const plan = validateTacticalPlan(parsed);
+    const durationMs = performance.now() - t0;
+    console.log(
+      `[LLM] Tactical plan for ${agent.id}: ${plan.movementPattern} / ${plan.primaryMove} / agg:${plan.aggressionLevel} / dodge:${plan.dodgeFrequency}`
+    );
+    return { plan, source: 'llm', durationMs };
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.warn(`[LLM] Parse failed for ${agent.id}, retry with minimal prompt: ${errMsg}`);
+
+    const retryPrompt = buildMinimalRetryPrompt(agent, opponent, state);
+    const second = await generateTacticalPlanOnce(retryPrompt, agent.id);
+
+    if (second.ok) {
+      try {
+        const parsed2 = JSON.parse(second.raw);
+        const plan = validateTacticalPlan(parsed2);
+        const durationMs = performance.now() - t0;
+        console.log(`[LLM] Retry tactical plan for ${agent.id}: ${plan.movementPattern}`);
+        return { plan, source: 'retry_llm', durationMs, error: errMsg };
+      } catch (err2: unknown) {
+        const durationMs = performance.now() - t0;
+        const err2Msg = err2 instanceof Error ? err2.message : String(err2);
+        return {
+          plan: defaultTacticalPlanFailure('Default strategy due to LLM error.'),
+          source: 'default',
+          durationMs,
+          error: `${errMsg}; retry: ${err2Msg}`,
+        };
+      }
+    }
+
+    const durationMs = performance.now() - t0;
+    return {
+      plan: defaultTacticalPlanFailure('Default strategy due to LLM error.'),
+      source: 'default',
+      durationMs,
+      error: `${errMsg}; retry HTTP: ${second.error}`,
+    };
+  }
+}
+
+export async function getTacticalPlan(
+  agent: AgentState,
+  opponent: AgentState,
+  state: GameState,
+  playstyleMemory: string,
+  characterDescription: string,
+  actionHistory: ActionHistoryEntry[],
+  opponentHistory: ActionHistoryEntry[],
+  roundSummaries: RoundSummary[],
+  errorContext?: string
+): Promise<TacticalPlan> {
+  const r = await getTacticalPlanWithTrace(
+    agent,
+    opponent,
+    state,
+    playstyleMemory,
+    characterDescription,
+    actionHistory,
+    opponentHistory,
+    roundSummaries,
+    errorContext
+  );
+  return r.plan;
 }
 
 // Backward compatible: getAgentPlan wraps getTacticalPlan

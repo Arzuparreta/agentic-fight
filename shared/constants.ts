@@ -9,7 +9,8 @@ export const BASIC_ATTACK_RANGE = 80;
 export const BASIC_ATTACK_COOLDOWN = 20;
 export const MOVEMENT_SPEED = 3;
 
-export const DODGE_DISTANCE = 80;
+/** Per-tick dodge burst (lower = less “teleport” vs walk speed). */
+export const DODGE_DISTANCE = 40;
 export const DODGE_COOLDOWN = 50;
 export const DODGE_INVINCIBILITY_TICKS = 6;
 export const DIAGONAL_SPEED_FACTOR = Math.SQRT1_2;

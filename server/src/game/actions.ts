@@ -208,11 +208,12 @@ function resolveCollision(agents: AgentState[]): void {
     const overlap = minDist - dist;
     const nx = dx / dist;
     const ny = dy / dist;
+    const separation = overlap * 0.35;
 
-    a.position.x = Math.max(0, Math.round(a.position.x - nx * overlap * 0.5));
-    a.position.y = Math.max(0, Math.round(a.position.y - ny * overlap * 0.5));
-    b.position.x = Math.min(ARENA.width, Math.round(b.position.x + nx * overlap * 0.5));
-    b.position.y = Math.min(ARENA.height, Math.round(b.position.y + ny * overlap * 0.5));
+    a.position.x = Math.max(0, Math.round(a.position.x - nx * separation));
+    a.position.y = Math.max(0, Math.round(a.position.y - ny * separation));
+    b.position.x = Math.min(ARENA.width, Math.round(b.position.x + nx * separation));
+    b.position.y = Math.min(ARENA.height, Math.round(b.position.y + ny * separation));
   }
 }
 

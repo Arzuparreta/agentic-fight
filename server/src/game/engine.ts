@@ -2,26 +2,31 @@ import {
   GameState,
   SimEvent,
   AgentState,
-  getAvailableMoves,
-  getMoveDef,
   PlaystyleProfile,
-  PlaystyleParameters,
   TacticalPlan,
   ActionHistoryEntry,
-  OpponentTendencies,
   RoundSummary,
   PLAN_INTERVAL,
+  getAvailableMoves,
 } from '@shared/index';
 import { AgentConfig, createInitialState, getOpponent, advanceCooldowns } from './state';
 import { AgentAction, validateAction, applyActions } from './actions';
-import { getTacticalPlan } from '../llm/ollama';
+import { getTacticalPlanWithTrace } from '../llm/ollama';
 import {
   chooseAction,
   buildBehaviorContext,
-  analyzeOpponentTendencies,
   ComboState,
 } from './behavior';
 import { parseDirectives, mergeDirectivesIntoPlan } from './directives';
+import { tickRand } from './rng';
+import {
+  createSimulationMetrics,
+  recordAction,
+  recordValidationFailure,
+  recordPlanFetch,
+  recordAdjustment,
+  type SimulationMetrics,
+} from './simulation-metrics';
 
 export interface LLMClient {
   getAction: (
@@ -34,16 +39,9 @@ export interface LLMClient {
   ) => Promise<AgentAction>;
 }
 
-export interface PlanClient {
-  getPlan: (
-    agent: AgentState,
-    opponent: AgentState,
-    state: GameState,
-    playstyleMemory: string,
-    characterDescription: string,
-    errorContext?: string
-  ) => Promise<AgentPlan>;
-  getTacticalPlan?: (
+/** Injectable tactical planner (e.g. LLM or deterministic stub for tests). */
+export interface TacticalPlanClient {
+  getPlan(
     agent: AgentState,
     opponent: AgentState,
     state: GameState,
@@ -52,20 +50,18 @@ export interface PlanClient {
     actionHistory: ActionHistoryEntry[],
     opponentHistory: ActionHistoryEntry[],
     roundSummaries: RoundSummary[]
-  ) => Promise<TacticalPlan>;
+  ): Promise<TacticalPlan>;
 }
 
-export interface AgentPlan {
-  plan: 'approach' | 'retreat' | 'attack' | 'defend' | 'idle';
-  preferredMove: string;
-  reasoning: string;
-}
+/** @deprecated Use TacticalPlanClient — alias for room/tests */
+export type PlanClient = TacticalPlanClient;
 
 export interface SimulationResult {
   eventLog: SimEvent[];
   reasoningLog: Record<string, { tick: number; action: string; reasoning: string }[]>;
   winnerId: string | null;
   finalTick: number;
+  metrics: SimulationMetrics;
 }
 
 function euclideanDistance(a: { x: number; y: number }, b: { x: number; y: number }): number {
@@ -75,7 +71,7 @@ function euclideanDistance(a: { x: number; y: number }, b: { x: number; y: numbe
 function parsePlaystyleProfile(memory: string): PlaystyleProfile | null {
   if (!memory) return null;
   try {
-    return JSON.parse(memory);
+    return JSON.parse(memory) as PlaystyleProfile;
   } catch {
     return null;
   }
@@ -88,6 +84,8 @@ interface AgentRuntime {
   actionHistory: ActionHistoryEntry[];
   opponentActionHistory: ActionHistoryEntry[];
   comboState: ComboState;
+  strafeSign: 1 | -1;
+  strafeCommitUntil: number;
 }
 
 function createDefaultPlan(aggressionLevel: number = 50): TacticalPlan {
@@ -107,13 +105,47 @@ function createDefaultPlan(aggressionLevel: number = 50): TacticalPlan {
   };
 }
 
+function createLlmTacticalClient(metrics: SimulationMetrics): TacticalPlanClient {
+  return {
+    async getPlan(
+      agent,
+      opponent,
+      state,
+      playstyleMemory,
+      characterDescription,
+      actionHistory,
+      opponentHistory,
+      roundSummaries
+    ) {
+      const r = await getTacticalPlanWithTrace(
+        agent,
+        opponent,
+        state,
+        playstyleMemory,
+        characterDescription,
+        actionHistory,
+        opponentHistory,
+        roundSummaries
+      );
+      if (r.source === 'llm') {
+        recordPlanFetch(metrics, 'llm_success', r.durationMs, r.error);
+      } else if (r.source === 'retry_llm') {
+        recordPlanFetch(metrics, 'retry_recovery', r.durationMs, r.error);
+      } else {
+        recordPlanFetch(metrics, 'default', r.durationMs, r.error);
+      }
+      return r.plan;
+    },
+  };
+}
+
 async function resolveAgentAction(
   state: GameState,
   agent: AgentState,
   config: AgentConfig,
   tacticalClient: TacticalPlanClient,
   runtimes: Map<string, AgentRuntime>,
-  retries: number = 0
+  metrics: SimulationMetrics
 ): Promise<AgentAction> {
   const opponent = getOpponent(state, agent.id);
   let runtime = runtimes.get(agent.id);
@@ -126,10 +158,14 @@ async function resolveAgentAction(
       const roundSummaries: RoundSummary[] = [];
 
       newPlan = await tacticalClient.getPlan(
-        agent, opponent, state,
+        agent,
+        opponent,
+        state,
         config.playstyleMemory,
         config.characterDescription,
-        history, oppHistory, roundSummaries
+        history,
+        oppHistory,
+        roundSummaries
       );
     } catch (err) {
       console.error(`[Tick ${state.tick}] Error getting plan for ${agent.id}:`, err);
@@ -147,17 +183,33 @@ async function resolveAgentAction(
       actionHistory: runtime?.actionHistory ?? [],
       opponentActionHistory: runtime?.opponentActionHistory ?? [],
       comboState: runtime?.comboState ?? { currentCombo: null, comboStep: 0, comboWaitTicks: 0 },
+      strafeSign: runtime?.strafeSign ?? (tickRand(agent.id, state.tick, 992) < 0.5 ? -1 : 1),
+      strafeCommitUntil: runtime?.strafeCommitUntil ?? state.tick + 8,
     };
 
     runtimes.set(agent.id, runtime);
   }
 
+  const patience = runtime.playstyleProfile?.parameters?.patience ?? 50;
+  if (state.tick >= runtime.strafeCommitUntil) {
+    runtime.strafeSign = tickRand(agent.id, state.tick, 991) < 0.5 ? -1 : 1;
+    const span = 10 + Math.floor((patience / 100) * 14);
+    runtime.strafeCommitUntil = state.tick + span;
+  }
+
+  const directiveList = runtime.playstyleProfile?.directives ?? [];
   const ctx = buildBehaviorContext(
-    agent, opponent, runtime.plan,
-    runtime.actionHistory, runtime.opponentActionHistory,
-    state.tick, state.maxTicks,
-    runtime.playstyleProfile ? parseDirectives(runtime.playstyleProfile.directives) : [],
-    runtime.comboState
+    agent,
+    opponent,
+    runtime.plan,
+    runtime.actionHistory,
+    runtime.opponentActionHistory,
+    state.tick,
+    state.maxTicks,
+    parseDirectives(directiveList),
+    runtime.comboState,
+    runtime.playstyleProfile?.parameters ?? null,
+    runtime.strafeSign
   );
 
   const result = chooseAction(ctx);
@@ -166,63 +218,57 @@ async function resolveAgentAction(
   const validation = validateAction(state, agent.id, result, available);
 
   if (validation.valid) {
+    recordAction(metrics, agent.id, result.action);
     return result;
   }
 
+  recordValidationFailure(metrics, agent.id, validation.error);
+
   if (result.action.startsWith('dodge_') && agent.dodgeCooldown > 0) {
+    recordAdjustment(metrics, agent.id, 'dodgeCooldownToMove');
     const dx = opponent.position.x - agent.position.x;
     const dy = opponent.position.y - agent.position.y;
     const absDx = Math.abs(dx);
     const absDy = Math.abs(dy);
-    if (absDx > absDy) {
-      return { action: dx > 0 ? 'move_right' : 'move_left', reasoning: `${result.reasoning} (dodge on cooldown, moving instead)` };
-    }
-    return { action: dy > 0 ? 'move_down' : 'move_up', reasoning: `${result.reasoning} (dodge on cooldown, moving instead)` };
+    const adjusted =
+      absDx > absDy
+        ? { action: dx > 0 ? 'move_right' : 'move_left', reasoning: `${result.reasoning} (dodge on cooldown, moving instead)` }
+        : { action: dy > 0 ? 'move_down' : 'move_up', reasoning: `${result.reasoning} (dodge on cooldown, moving instead)` };
+    recordAction(metrics, agent.id, adjusted.action);
+    return adjusted;
   }
 
   if (result.action === 'basic_attack' && validation.error?.includes('range')) {
+    recordAdjustment(metrics, agent.id, 'rangeToMove');
     const dx = opponent.position.x - agent.position.x;
     const dy = opponent.position.y - agent.position.y;
     const absDx = Math.abs(dx);
     const absDy = Math.abs(dy);
-    if (absDx > absDy) {
-      return { action: dx > 0 ? 'move_right' : 'move_left', reasoning: `${result.reasoning} (adjusted: out of range)` };
-    }
-    return { action: dy > 0 ? 'move_down' : 'move_up', reasoning: `${result.reasoning} (adjusted: out of range)` };
+    const adjusted =
+      absDx > absDy
+        ? { action: dx > 0 ? 'move_right' : 'move_left', reasoning: `${result.reasoning} (adjusted: out of range)` }
+        : { action: dy > 0 ? 'move_down' : 'move_up', reasoning: `${result.reasoning} (adjusted: out of range)` };
+    recordAction(metrics, agent.id, adjusted.action);
+    return adjusted;
   }
 
   if (result.action.startsWith('move_')) {
-    return { action: 'idle', reasoning: `${result.reasoning} (adjusted: cannot move)` };
+    recordAdjustment(metrics, agent.id, 'moveToIdle');
+    const idle = { action: 'idle', reasoning: `${result.reasoning} (adjusted: cannot move)` };
+    recordAction(metrics, agent.id, 'idle');
+    return idle;
   }
 
-  return { action: 'idle', reasoning: `${result.reasoning} (adjusted: invalid, idling)` };
-}
-
-interface TacticalPlanClient {
-  getPlan(
-    agent: AgentState,
-    opponent: AgentState,
-    state: GameState,
-    playstyleMemory: string,
-    characterDescription: string,
-    actionHistory: ActionHistoryEntry[],
-    opponentHistory: ActionHistoryEntry[],
-    roundSummaries: RoundSummary[]
-  ): Promise<TacticalPlan>;
-}
-
-function createDefaultTacticalClient(): TacticalPlanClient {
-  return {
-    async getPlan(agent, opponent, state, playstyleMemory, characterDescription, actionHistory, opponentHistory, roundSummaries) {
-      return getTacticalPlan(agent, opponent, state, playstyleMemory, characterDescription, actionHistory, opponentHistory, roundSummaries);
-    },
-  };
+  recordAdjustment(metrics, agent.id, 'invalidToIdle');
+  const idle = { action: 'idle', reasoning: `${result.reasoning} (adjusted: invalid, idling)` };
+  recordAction(metrics, agent.id, 'idle');
+  return idle;
 }
 
 export async function simulateRound(
   agentA: AgentConfig,
   agentB: AgentConfig,
-  planClient?: any
+  planClient?: TacticalPlanClient
 ): Promise<SimulationResult> {
   const state = createInitialState(agentA, agentB);
   const reasoningLog: Record<string, { tick: number; action: string; reasoning: string }[]> = {
@@ -230,8 +276,9 @@ export async function simulateRound(
     [agentB.id]: [],
   };
 
+  const metrics = createSimulationMetrics([agentA.id, agentB.id]);
   const runtimes = new Map<string, AgentRuntime>();
-  const client = createDefaultTacticalClient();
+  const client = planClient ?? createLlmTacticalClient(metrics);
 
   console.log(`[Engine] Starting simulation: ${agentA.name} vs ${agentB.name}`);
 
@@ -244,8 +291,10 @@ export async function simulateRound(
     }
 
     const configs = { [agentA.id]: agentA, [agentB.id]: agentB };
+    const idxById = new Map(alive.map((a, i) => [a.id, i] as const));
+
     const actionPromises = alive.map((agent) =>
-      resolveAgentAction(state, agent, configs[agent.id], client, runtimes)
+      resolveAgentAction(state, agent, configs[agent.id], client, runtimes, metrics)
     );
     const resolvedActions = await Promise.all(actionPromises);
 
@@ -265,11 +314,13 @@ export async function simulateRound(
     for (const agent of alive) {
       const opp = getOpponent(state, agent.id);
       const runtime = runtimes.get(agent.id);
+      const ai = idxById.get(agent.id) ?? 0;
+      const oi = idxById.get(opp.id) ?? 0;
       if (runtime) {
         runtime.actionHistory.push({
           tick: state.tick,
           agentId: agent.id,
-          action: resolvedActions[alive.indexOf(agent)].action,
+          action: resolvedActions[ai].action,
           position: { x: agent.position.x, y: agent.position.y },
           hp: agent.hp,
           maxHp: agent.maxHp,
@@ -280,7 +331,7 @@ export async function simulateRound(
         runtime.opponentActionHistory.push({
           tick: state.tick,
           agentId: opp.id,
-          action: resolvedActions[alive.indexOf(opp) !== -1 ? alive.indexOf(opp) : 0]?.action ?? 'idle',
+          action: resolvedActions[oi]?.action ?? 'idle',
           position: { x: opp.position.x, y: opp.position.y },
           hp: opp.hp,
           maxHp: opp.maxHp,
@@ -299,7 +350,6 @@ export async function simulateRound(
 
     advanceCooldowns(state);
 
-    // Clear invincibility if expired
     for (const agent of alive) {
       if (state.tick >= agent.invincibleUntilTick) {
         agent.isDodging = false;
@@ -328,11 +378,15 @@ export async function simulateRound(
   }
 
   console.log(`[Engine] Simulation complete at tick ${state.tick}. Winner: ${winnerId || 'draw'}`);
+  console.log(
+    `[Metrics] idle A:${metrics.perAgent[agentA.id]?.idleTicks}/${metrics.perAgent[agentA.id]?.totalTicks} B:${metrics.perAgent[agentB.id]?.idleTicks}/${metrics.perAgent[agentB.id]?.totalTicks} plans llm:${metrics.planFetches.llmSuccess} default:${metrics.planFetches.llmDefault} retry:${metrics.planFetches.retryRecovery}`
+  );
 
   return {
     eventLog: state.eventLog,
     reasoningLog,
     winnerId,
     finalTick: state.tick,
+    metrics,
   };
 }
