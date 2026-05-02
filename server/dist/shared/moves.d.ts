@@ -1,4 +1,4 @@
-import { AgentState, StatusEffect } from './types';
+import { AgentState, StatusEffect, AttackProfile } from './types';
 export interface MoveDef {
     id: string;
     name: string;
@@ -10,6 +10,7 @@ export interface MoveDef {
     cooldown?: number;
     duration?: number;
     statusEffect?: Omit<StatusEffect, 'remainingTicks'>;
+    attackProfile?: AttackProfile;
     statChanges?: Partial<{
         maxHp: number;
         movementSpeed: number;

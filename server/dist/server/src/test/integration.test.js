@@ -1,7 +1,7 @@
 import { RoomManager } from '../rooms/manager';
-import { STUB_TACTICAL_PLAN } from './stubTacticalPlan';
-const stubPlanClient = {
-    getPlan: async () => STUB_TACTICAL_PLAN,
+import { STUB_SEQUENCE } from './stubSequence';
+const stubSequenceClient = {
+    getSequence: async () => STUB_SEQUENCE,
 };
 async function runIntegrationTest() {
     console.log('=== End-to-End Integration Test ===\n');
@@ -44,7 +44,7 @@ async function runIntegrationTest() {
     room.phase = 'simulating';
     console.log('  Memories set, phase forced to simulating');
     console.log('\nStep 6: Run simulation');
-    const simResult = await manager.runSimulation(roomId, stubPlanClient);
+    const simResult = await manager.runSimulation(roomId, stubSequenceClient);
     if ('error' in simResult) {
         console.error('FAIL:', simResult.error);
         process.exit(1);
@@ -115,13 +115,13 @@ async function runIntegrationTest() {
         console.error('FAIL: P1 should still have sword_lunge');
         process.exit(1);
     }
-    if (afterBoth.players[p2Id].stats.maxHp !== 170) {
-        console.error('FAIL: P2 should still have 170 max HP');
+    if (afterBoth.players[p2Id].stats.maxHp !== 220) {
+        console.error('FAIL: P2 should still have 220 max HP');
         process.exit(1);
     }
     console.log('\nStep 11: Run Round 2 simulation');
     room.phase = 'simulating';
-    const sim2 = await manager.runSimulation(roomId, stubPlanClient);
+    const sim2 = await manager.runSimulation(roomId, stubSequenceClient);
     if ('error' in sim2) {
         console.error('FAIL:', sim2.error);
         process.exit(1);
@@ -145,7 +145,7 @@ async function runIntegrationTest() {
     console.log('  [x] Room created');
     console.log('  [x] Mobiles joined');
     console.log('  [x] Coaching messages stored');
-    console.log('  [x] Simulation ran with dummy plan client');
+    console.log('  [x] Simulation ran with dummy sequence client');
     console.log('  [x] Playback phase triggered');
     console.log('  [x] Economy calculated');
     console.log('  [x] Shop phase opened');

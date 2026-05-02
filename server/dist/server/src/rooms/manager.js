@@ -3,7 +3,6 @@ import { simulateRound } from '../game/engine';
 import { calculateEarnings } from '../game/economy';
 import { purchaseItem } from '../game/shop';
 import { synthesizePlaystyle, generateAgentOpeningMessage, generateAgentResponse, generateRoundSummary } from '../llm/ollama';
-import { MOVE_CATALOG } from '@shared/index';
 const RECONNECT_TIMEOUT_MS = 10000;
 const ROUNDS_TO_WIN = 3;
 function generateRoomId() {
@@ -21,7 +20,7 @@ function createRoomPlayer(socketId, role, agentName, characterDescription) {
         role,
         agentName: agentName || `Agent ${socketId.slice(0, 4)}`,
         characterDescription: characterDescription || 'a mysterious fighter',
-        stats: { maxHp: 150, movementSpeed: 3, attackDamage: 8 },
+        stats: { maxHp: 200, movementSpeed: 10, attackDamage: 10 },
         moves: [],
         money: STARTING_MONEY,
         coachingMessages: [],
@@ -32,8 +31,6 @@ function createRoomPlayer(socketId, role, agentName, characterDescription) {
     };
 }
 function buildCoachingContext(player, room) {
-    const ownedMoves = player.moves.filter(m => MOVE_CATALOG[m]?.type === 'move');
-    const ownedBoosts = player.moves.filter(m => MOVE_CATALOG[m]?.type === 'boost');
     let lastRoundResult;
     if (room.roundHistory.length > 0) {
         const last = room.roundHistory[room.roundHistory.length - 1];
@@ -46,9 +43,6 @@ function buildCoachingContext(player, room) {
     return {
         agentName: player.agentName,
         characterDescription: player.characterDescription,
-        money: player.money,
-        ownedMoves,
-        ownedBoosts,
         lastRoundResult,
         opponentCharacter: opponent?.characterDescription,
         roundNumber: room.currentRound,
@@ -240,7 +234,7 @@ export class RoomManager {
         }
         return { room };
     }
-    async runSimulation(roomId, planClient) {
+    async runSimulation(roomId, sequenceClient) {
         const room = this.getRoom(roomId);
         if (!room)
             return { error: 'Room not found.' };
@@ -267,7 +261,7 @@ export class RoomManager {
             characterDescription: pB.characterDescription,
         };
         console.log(`[Room ${roomId}] Running simulation for round ${room.currentRound}`);
-        const simResult = await simulateRound(agentA, agentB, planClient);
+        const simResult = await simulateRound(agentA, agentB, sequenceClient);
         room.eventLog = simResult.eventLog;
         const winnerId = simResult.winnerId;
         if (winnerId) {

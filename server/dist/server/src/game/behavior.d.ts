@@ -1,55 +1,6 @@
-import { AgentState, PlaystyleParameters, TacticalPlan, ParsedDirective } from '@shared/index';
-export interface ActionHistoryEntry {
-    tick: number;
-    agentId: string;
-    action: string;
-    position: {
-        x: number;
-        y: number;
-    };
-    hp: number;
-    maxHp: number;
-    distance: number;
-    statusEffects: string[];
+import { ActionHistoryEntry, OpponentTendencies } from '@shared/index';
+export interface OpponentTendenciesLocal extends OpponentTendencies {
 }
-export interface OpponentTendencies {
-    preferredMoves: Record<string, number>;
-    dodgeFrequency: number;
-    approachRetreatRatio: number;
-    comboUsage: number;
-    averageDistance: number;
-    shieldUsage: number;
-}
-export interface BehaviorContext {
-    agent: AgentState;
-    opponent: AgentState;
-    plan: TacticalPlan;
-    hpRatio: number;
-    opponentHpRatio: number;
-    distance: number;
-    maxAttackRange: number;
-    primaryAttackRange: number;
-    history: ActionHistoryEntry[];
-    opponentHistory: ActionHistoryEntry[];
-    tick: number;
-    maxTicks: number;
-    tendencies: OpponentTendencies;
-    directives: ParsedDirective[];
-    comboState: ComboState;
-    /** Coaching-derived weights (null if no profile). */
-    playstyle: PlaystyleParameters | null;
-    /** Committed left/right strafe direction for smoother circling. */
-    strafeSign: 1 | -1;
-}
-export interface ComboState {
-    currentCombo: string[] | null;
-    comboStep: number;
-    comboWaitTicks: number;
-}
-export declare function chooseAction(ctx: BehaviorContext): {
-    action: string;
-    reasoning: string;
-};
+export { ActionHistoryEntry };
 export declare function analyzeOpponentTendencies(history: ActionHistoryEntry[]): OpponentTendencies;
-export declare function buildBehaviorContext(agent: AgentState, opponent: AgentState, plan: TacticalPlan, history: ActionHistoryEntry[], opponentHistory: ActionHistoryEntry[], tick: number, maxTicks: number, directives: ParsedDirective[], comboState: ComboState, playstyle: PlaystyleParameters | null, strafeSign: 1 | -1): BehaviorContext;
 //# sourceMappingURL=behavior.d.ts.map

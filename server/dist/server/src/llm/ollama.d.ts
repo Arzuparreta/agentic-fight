@@ -1,30 +1,20 @@
-import { AgentState, GameState, PlaystyleProfile, CoachingMessage, TacticalPlan, ActionHistoryEntry, RoundSummary } from '@shared/index';
+import { AgentState, GameState, PlaystyleProfile, CoachingMessage, ActionSequence, ActionHistoryEntry, RoundSummary } from '@shared/index';
 export interface AgentAction {
     action: string;
     reasoning: string;
 }
-export interface AgentPlan {
-    plan: 'approach' | 'retreat' | 'attack' | 'defend' | 'idle';
-    preferredMove: string;
-    reasoning: string;
-}
-export type TacticalPlanSource = 'llm' | 'default' | 'retry_llm';
-export interface TacticalPlanCallResult {
-    plan: TacticalPlan;
-    source: TacticalPlanSource;
+export type SequenceSource = 'llm' | 'default' | 'retry_llm';
+export interface SequenceCallResult {
+    sequence: ActionSequence;
+    source: SequenceSource;
     durationMs: number;
     error?: string;
 }
-export declare function getTacticalPlanWithTrace(agent: AgentState, opponent: AgentState, state: GameState, playstyleMemory: string, characterDescription: string, actionHistory: ActionHistoryEntry[], opponentHistory: ActionHistoryEntry[], roundSummaries: RoundSummary[], errorContext?: string): Promise<TacticalPlanCallResult>;
-export declare function getTacticalPlan(agent: AgentState, opponent: AgentState, state: GameState, playstyleMemory: string, characterDescription: string, actionHistory: ActionHistoryEntry[], opponentHistory: ActionHistoryEntry[], roundSummaries: RoundSummary[], errorContext?: string): Promise<TacticalPlan>;
-export declare function getAgentPlan(agent: AgentState, opponent: AgentState, state: GameState, playstyleMemory: string, characterDescription: string, errorContext?: string): Promise<AgentPlan>;
-export declare function getAgentAction(agent: AgentState, opponent: AgentState, state: GameState, playstyleMemory: string, characterDescription: string, errorContext?: string): Promise<AgentAction>;
+export declare function getSequenceWithTrace(agent: AgentState, opponent: AgentState, state: GameState, playstyleMemory: string, characterDescription: string, actionHistory: ActionHistoryEntry[], opponentHistory: ActionHistoryEntry[], roundSummaries: RoundSummary[], errorContext?: string): Promise<SequenceCallResult>;
+export declare function getTacticalPlanWithTrace(agent: AgentState, opponent: AgentState, state: GameState, playstyleMemory: string, characterDescription: string, actionHistory: ActionHistoryEntry[], opponentHistory: ActionHistoryEntry[], roundSummaries: RoundSummary[], errorContext?: string): Promise<any>;
 export interface CoachingContext {
     agentName: string;
     characterDescription: string;
-    money: number;
-    ownedMoves: string[];
-    ownedBoosts: string[];
     lastRoundResult?: {
         won: boolean;
         score: string;

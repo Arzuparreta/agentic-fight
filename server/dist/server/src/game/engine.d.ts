@@ -1,16 +1,9 @@
-import { GameState, SimEvent, AgentState, TacticalPlan, ActionHistoryEntry, RoundSummary } from '@shared/index';
+import { GameState, SimEvent, AgentState, ActionSequence, ActionHistoryEntry, RoundSummary } from '@shared/index';
 import { AgentConfig } from './state';
-import { AgentAction } from './actions';
 import { type SimulationMetrics } from './simulation-metrics';
-export interface LLMClient {
-    getAction: (agent: AgentState, opponent: AgentState, state: GameState, playstyleMemory: string, characterDescription: string, errorContext?: string) => Promise<AgentAction>;
+export interface TacticalSequenceClient {
+    getSequence(agent: AgentState, opponent: AgentState, state: GameState, playstyleMemory: string, characterDescription: string, actionHistory: ActionHistoryEntry[], opponentHistory: ActionHistoryEntry[], roundSummaries: RoundSummary[]): Promise<ActionSequence>;
 }
-/** Injectable tactical planner (e.g. LLM or deterministic stub for tests). */
-export interface TacticalPlanClient {
-    getPlan(agent: AgentState, opponent: AgentState, state: GameState, playstyleMemory: string, characterDescription: string, actionHistory: ActionHistoryEntry[], opponentHistory: ActionHistoryEntry[], roundSummaries: RoundSummary[]): Promise<TacticalPlan>;
-}
-/** @deprecated Use TacticalPlanClient — alias for room/tests */
-export type PlanClient = TacticalPlanClient;
 export interface SimulationResult {
     eventLog: SimEvent[];
     reasoningLog: Record<string, {
@@ -22,5 +15,5 @@ export interface SimulationResult {
     finalTick: number;
     metrics: SimulationMetrics;
 }
-export declare function simulateRound(agentA: AgentConfig, agentB: AgentConfig, planClient?: TacticalPlanClient): Promise<SimulationResult>;
+export declare function simulateRound(agentA: AgentConfig, agentB: AgentConfig, sequenceClient?: TacticalSequenceClient): Promise<SimulationResult>;
 //# sourceMappingURL=engine.d.ts.map

@@ -23,10 +23,54 @@ export interface PlaystyleProfile {
     parameters: PlaystyleParameters;
     directives: string[];
 }
+export interface AttackProfile {
+    windupTicks: number;
+    activeTicks: number;
+    recoveryTicks: number;
+    canMoveDuringWindup: boolean;
+    windupMoveSpeedMult: number;
+    canMoveDuringRecovery: boolean;
+    recoveryMoveSpeedMult: number;
+    whiffRecoveryExtraTicks: number;
+}
+export type AttackPhase = 'idle' | 'windup' | 'active' | 'recovery' | 'whiff';
+export interface AttackState {
+    phase: AttackPhase;
+    moveId: string | null;
+    ticksInPhase: number;
+    hasHit: boolean;
+    facingAtStart: number;
+}
+export interface AgentPhysics {
+    position: Vec2;
+    velocity: Vec2;
+    maxSpeed: number;
+    acceleration: number;
+    friction: number;
+    turnSpeed: number;
+    facingAngle: number;
+}
+export type MacroAction = 'approach' | 'circle_left' | 'circle_right' | 'feint_approach' | 'bait' | 'dodge' | 'attack' | 'retreat' | 'shield_up' | 'wait' | 'kite' | 'punish' | 'dodge_and_counter' | 'rushdown';
+export interface SequenceAction {
+    macro: MacroAction;
+    duration?: number;
+    moveId?: string;
+    directionHint?: string;
+}
+export interface ActionSequence {
+    actions: SequenceAction[];
+    interruptConditions: string[];
+    strategy: string;
+    reasoning: string;
+}
+export interface SequenceExecution {
+    sequence: ActionSequence;
+    currentActionIndex: number;
+    ticksInCurrentAction: number;
+}
 export interface AgentState {
     id: string;
     name: string;
-    position: Vec2;
     hp: number;
     maxHp: number;
     stats: Stats;
@@ -34,10 +78,14 @@ export interface AgentState {
     moves: string[];
     statusEffects: StatusEffect[];
     status: 'alive' | 'dead';
+    physics: AgentPhysics;
     dodgeCooldown: number;
-    invincibleUntilTick: number;
+    dodgeInvincibleUntilTick: number;
     isDodging: boolean;
     dodgeDirection: DodgeDirection | null;
+    attackState: AttackState;
+    sequenceExecution: SequenceExecution | null;
+    lastPlanTick: number;
     facingAngle: number;
 }
 export interface GameState {
@@ -45,11 +93,16 @@ export interface GameState {
     maxTicks: number;
     agents: Record<string, AgentState>;
     eventLog: SimEvent[];
+    whiffWindows: Record<string, {
+        untilTick: number;
+        moveId: string;
+        fromAgentId: string;
+    }>;
 }
 export interface SimEvent {
     tick: number;
     agentId: string;
-    type: 'move' | 'attack' | 'special' | 'hit' | 'death' | 'idle' | 'dodge' | 'move_diagonal';
+    type: 'move' | 'attack' | 'special' | 'hit' | 'death' | 'idle' | 'dodge' | 'move_diagonal' | 'windup' | 'attack_active' | 'recovery' | 'whiff' | 'counter_window' | 'turn' | 'dodge_start' | 'dodge_end';
     payload: Record<string, unknown>;
 }
 export interface Stats {

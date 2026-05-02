@@ -1,5 +1,5 @@
 import { Room, RoomPlayer, RoundResult } from '@shared/index';
-import { PlanClient } from '../game/engine';
+import { TacticalSequenceClient } from '../game/engine';
 export declare class RoomManager {
     private rooms;
     createRoom(browserSocketId: string): Room;
@@ -39,7 +39,7 @@ export declare class RoomManager {
     } | {
         error: string;
     }>;
-    runSimulation(roomId: string, planClient?: PlanClient): Promise<{
+    runSimulation(roomId: string, sequenceClient?: TacticalSequenceClient): Promise<{
         room: Room;
         result: RoundResult;
     } | {
