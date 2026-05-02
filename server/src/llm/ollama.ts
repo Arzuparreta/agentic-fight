@@ -7,50 +7,35 @@ import {
   PlaystyleParameters,
   CoachingMessage,
   MOVE_CATALOG,
-  TacticalPlan,
-  TacticalReactions,
+  ActionSequence,
+  MacroAction,
+  VALID_MACRO_ACTIONS,
   ActionHistoryEntry,
   OpponentTendencies,
   RoundSummary,
-  VALID_MOVEMENT_PATTERNS,
-  VALID_REACTION_OPTIONS,
 } from '@shared/index';
-import { ActionHistoryEntry as BHActionHistoryEntry, analyzeOpponentTendencies } from '../game/behavior';
+import { analyzeOpponentTendencies, ActionHistoryEntry as BHActionHistoryEntry } from '../game/behavior';
 
 export interface AgentAction {
   action: string;
   reasoning: string;
 }
 
-export interface AgentPlan {
-  plan: 'approach' | 'retreat' | 'attack' | 'defend' | 'idle';
-  preferredMove: string;
-  reasoning: string;
-}
+export type SequenceSource = 'llm' | 'default' | 'retry_llm';
 
-export type TacticalPlanSource = 'llm' | 'default' | 'retry_llm';
-
-export interface TacticalPlanCallResult {
-  plan: TacticalPlan;
-  source: TacticalPlanSource;
+export interface SequenceCallResult {
+  sequence: ActionSequence;
+  source: SequenceSource;
   durationMs: number;
   error?: string;
 }
 
-function defaultTacticalPlanFailure(reason: string): TacticalPlan {
+function defaultSequenceFailure(reason: string): ActionSequence {
   return {
     strategy: reason,
-    movementPattern: 'approach_direct',
-    primaryMove: 'basic_attack',
-    dodgeFrequency: 20,
-    aggressionLevel: 50,
-    reactions: {
-      ifOpponentShields: 'use_ranged',
-      ifOpponentRetreats: 'rush',
-      ifLowHP: 'berserk',
-      ifOpponentUsesRanged: 'dodge_close',
-    },
-    reasoning: 'LLM call failed, defaulting to basic approach.',
+    actions: [{ macro: 'approach', duration: 20 }, { macro: 'attack' }],
+    interruptConditions: ['opponent_winding_up'],
+    reasoning: 'Default sequence: approach and attack.',
   };
 }
 
@@ -77,7 +62,7 @@ function formatActionHistory(history: ActionHistoryEntry[], maxEntries: number =
   if (history.length === 0) return 'No recent actions.';
   const recent = history.slice(-maxEntries);
   return recent
-    .map((h) => `  Tick ${h.tick}: ${h.action} at (${h.position.x},${h.position.y}) HP:${h.hp}/${h.maxHp} dist:${h.distance.toFixed(0)}`)
+    .map((h) => `  Tick ${h.tick}: ${h.action} at (${Math.round(h.position.x)},${Math.round(h.position.y)}) HP:${h.hp}/${h.maxHp} dist:${h.distance.toFixed(0)}`)
     .join('\n');
 }
 
@@ -91,7 +76,21 @@ function formatTendencies(tendencies: OpponentTendencies): string {
   return `Approach/retreat ratio: ${(tendencies.approachRetreatRatio * 100).toFixed(0)}%, Dodge frequency: ${(tendencies.dodgeFrequency * 100).toFixed(0)}%, Shield usage: ${(tendencies.shieldUsage * 100).toFixed(0)}%, Top moves: ${topMoves || 'none'}, Avg distance: ${tendencies.averageDistance.toFixed(0)}`;
 }
 
-function buildTacticalPrompt(
+function formatAvailableMoves(agent: AgentState): string {
+  return getAvailableMoves(agent)
+    .map((m) => {
+      const cd = agent.cooldowns[m] ?? 0;
+      const def = getMoveDef(m);
+      const ready = cd <= 0 ? 'READY' : `cd:${cd}`;
+      const frameInfo = def?.attackProfile
+        ? `windup:${def.attackProfile.windupTicks} active:${def.attackProfile.activeTicks} recovery:${def.attackProfile.recoveryTicks}`
+        : '';
+      return `  - ${m}: ${def?.name || m} | dmg:${def?.damage || 0} range:${def?.range || 0} | ${ready} | ${frameInfo}`;
+    })
+    .join('\n');
+}
+
+function buildSequencePrompt(
   agent: AgentState,
   opponent: AgentState,
   state: GameState,
@@ -103,182 +102,192 @@ function buildTacticalPrompt(
   roundSummaries: RoundSummary[],
   errorContext?: string
 ): string {
-  const available = getAvailableMoves(agent)
-    .map((m) => {
-      const cd = agent.cooldowns[m] ?? 0;
-      const def = getMoveDef(m);
-      const rangeStr = def?.range ? `, range:${def.range}` : '';
-      const dmgStr = def?.damage ? `, dmg:${def.damage}` : '';
-      return cd > 0 ? `${m} (cd:${cd}${rangeStr}${dmgStr})` : `${m} (ready${rangeStr}${dmgStr})`;
-    })
-    .join(', ');
-
-  const dist = euclideanDistance(agent.position, opponent.position);
-  const myEffects = agent.statusEffects.map((se) => `${se.type}(${se.value}, ${se.remainingTicks} ticks)`).join(', ') || 'none';
-  const oppEffects = opponent.statusEffects.map((se) => `${se.type}(${se.value}, ${se.remainingTicks} ticks)`).join(', ') || 'unknown (estimate from behavior)';
+  const dist = euclideanDistance(agent.physics.position, opponent.physics.position);
+  const myEffects = agent.statusEffects.map((se) => `${se.type}(${se.value}, ${se.remainingTicks}t)`).join(', ') || 'none';
+  const oppEffects = opponent.statusEffects.map((se) => `${se.type}(${se.value}, ${se.remainingTicks}t)`).join(', ') || 'none';
 
   let narrative = 'I fight to win, adapting to the situation as it unfolds.';
   let directivesStr = '';
   if (playstyleProfile) {
     narrative = playstyleProfile.narrative;
     directivesStr = playstyleProfile.directives.length > 0
-      ? `\nYour specific tactical directives from your coach: ${playstyleProfile.directives.join('; ')}.`
+      ? `\nYour coach's directives: ${playstyleProfile.directives.join('; ')}.`
       : '';
   }
 
   const hpPressure = agent.hp / agent.maxHp > opponent.hp / opponent.maxHp
     ? 'You are winning the HP race.'
     : agent.hp / agent.maxHp < opponent.hp / opponent.maxHp
-      ? 'You are losing the HP race — consider more aggressive or defensive plays.'
+      ? 'You are losing the HP race — consider aggressive or defensive plays.'
       : 'HP is roughly even.';
 
   const distanceTrend = actionHistory.length >= 3
     ? actionHistory.slice(-3).reduce((acc, h, i, arr) => {
-      if (i === 0) return 0;
-      return acc + (h.distance - arr[i - 1].distance);
-    }, 0) < -5 ? 'closing in' : actionHistory.slice(-3).reduce((acc, h, i, arr) => {
-      if (i === 0) return 0;
-      return acc + (h.distance - arr[i - 1].distance);
-    }, 0) > 5 ? 'moving apart' : 'stable'
+        if (i === 0) return 0;
+        return acc + (h.distance - arr[i - 1].distance);
+      }, 0) < -5 ? 'closing in' : actionHistory.slice(-3).reduce((acc, h, i, arr) => {
+        if (i === 0) return 0;
+        return acc + (h.distance - arr[i - 1].distance);
+      }, 0) > 5 ? 'moving apart' : 'stable'
     : 'unknown';
+
+  let currentSequenceStr = '';
+  if (agent.sequenceExecution) {
+    const exec = agent.sequenceExecution;
+    const current = exec.sequence.actions[exec.currentActionIndex];
+    currentSequenceStr = `\nYou are currently executing: ${current?.macro || 'idle'} (step ${exec.currentActionIndex + 1}/${exec.sequence.actions.length}).`;
+  }
 
   let roundSummaryStr = '';
   if (roundSummaries.length > 0) {
     const last = roundSummaries[roundSummaries.length - 1];
-    roundSummaryStr = `\nLast round: You ${last.won ? 'WON' : 'LOST'}. Key events: ${last.keyEvents.slice(0, 5).join('; ')}. What worked: ${last.whatWorked.join(', ')}. What didn't: ${last.whatDidNotWork.join(', ')}.`;
+    roundSummaryStr = `\nLast round: You ${last.won ? 'WON' : 'LOST'}. What worked: ${last.whatWorked.join(', ')}. What didn't: ${last.whatDidNotWork.join(', ')}.`;
   }
 
-  const prompt = `You are ${agent.name}, ${characterDescription}.
-How you currently think about fighting: ${narrative}${directivesStr}
+  const prompt = `IMPORTANT: You must respond with ONLY a valid JSON object. No markdown, no explanation, no prose before or after the JSON.
+
+You are ${agent.name}, ${characterDescription}.
+How you think about fighting: ${narrative}${directivesStr}
 
 Current situation (tick ${state.tick} of ${state.maxTicks}):
-- Your position: (${agent.position.x}, ${agent.position.y}) | Opponent position: (${opponent.position.x}, ${opponent.position.y})
+- Your position: (${Math.round(agent.physics.position.x)}, ${Math.round(agent.physics.position.y)}) | Opponent: (${Math.round(opponent.physics.position.x)}, ${Math.round(opponent.physics.position.y)})
 - Your HP: ${agent.hp}/${agent.maxHp} | Opponent HP: ${opponent.hp}/${opponent.maxHp}
-- Distance to opponent: ${dist.toFixed(0)} units (trend: ${distanceTrend})
-- Your active effects: ${myEffects}
-- Opponent estimated effects: ${oppEffects}
-- Available moves: ${available}
-- Dodge: ${agent.dodgeCooldown > 0 ? `cooldown ${agent.dodgeCooldown} ticks` : 'ready'}
+- Distance: ${dist.toFixed(0)} units (trend: ${distanceTrend})
+- Your effects: ${myEffects}
+- Opponent effects: ${oppEffects}
+- Dodge: ${agent.dodgeCooldown > 0 ? `cooldown ${agent.dodgeCooldown} ticks` : 'READY'}
+- Your attack state: ${agent.attackState.phase}${agent.attackState.moveId ? ` (${agent.attackState.moveId})` : ''}
+- Opponent attack state: ${opponent.attackState.phase}${opponent.attackState.moveId ? ` (${opponent.attackState.moveId})` : ''}
+${currentSequenceStr}
+
+Your available moves:
+${formatAvailableMoves(agent)}
 
 Recent opponent actions:
 ${formatActionHistory(opponentHistory)}
 
-Opponent behavioral tendencies: ${formatTendencies(tendencies)}
+Opponent tendencies: ${formatTendencies(tendencies)}
 
 ${hpPressure}${roundSummaryStr}
 
-Choose a tactical plan for the next few seconds. You must select a movement pattern, set your momentary aggression level, decide how often to dodge, and specify how to react to opponent behaviors.
+You must choose a sequence of macro-actions to execute over the next ~2 seconds (up to 40 ticks). Each macro is a pre-defined behavior. You can chain 1–6 macros in a sequence.
 
-Movement patterns:
-- approach_direct: Move straight toward opponent
-- circle_strafe_left/right: Orbit opponent at ideal range, always moving perpendicular
-- hit_and_retreat: Attack, then back off, then reapproach
-- dodge_and_counter: Wait for opponent to commit, dodge, then strike during recovery
-- rush: Close distance as fast as possible, maximize DPS
-- kite: Maintain maximum range, only use ranged attacks, retreat if opponent closes in
-- hold_position: Stay in place, only attack when opponent enters range
-- feint_approach: Approach confidently, then dodge sideways when close, creating openings
-- retreat: Move away from opponent
+Available macros:
+- approach: close distance aggressively
+- circle_left / circle_right: orbit opponent at ideal range
+- feint_approach: approach, then dodge sideways when close to bait an attack
+- bait: hover just outside opponent range, auto-dodge if they commit
+- dodge: quick burst evasion (can specify directionHint like "left" or "back_right")
+- attack: commit to an attack (specify moveId, e.g. "sword_lunge")
+- retreat: create distance
+- shield_up: raise shield_block if available
+- wait: hold position, observe
+- kite: maintain max range, use ranged attacks
+- punish: rush in and strike when opponent whiffs (misses an attack)
+- dodge_and_counter: bait opponent attack, dodge it, then counter-strike
+- rushdown: close distance fast and attack
+
+Interrupt conditions (the sequence will abort if any trigger):
+- opponent_winding_up
+- opponent_attacking
+- opponent_whiffed / opponent_recovery
+- low_hp
+- opponent_low_hp
+- in_range
+- out_of_range
+- dodge_ready
+- opponent_shielded
+- opponent_retreating
 
 Respond with exactly one JSON object:
 {
   "strategy": "1-2 sentence description of your current tactical thinking",
-  "movementPattern": "one of: ${VALID_MOVEMENT_PATTERNS.join(', ')}",
-  "primaryMove": "the move you want to use most when in range (e.g. basic_attack, sword_lunge, crossbow, etc.)",
-  "dodgeFrequency": 0-100 (how often to attempt dodges: 0=never, 100=dodge every chance),
-  "aggressionLevel": 0-100 (momentary aggression: 0=totally passive, 100=all-out attack),
-  "reactions": {
-    "ifOpponentShields": "one of: ${VALID_REACTION_OPTIONS.join(', ')}",
-    "ifOpponentRetreats": "one of: ${VALID_REACTION_OPTIONS.join(', ')}",
-    "ifLowHP": "one of: ${VALID_REACTION_OPTIONS.join(', ')}",
-    "ifOpponentUsesRanged": "one of: ${VALID_REACTION_OPTIONS.join(', ')}"
-  },
+  "actions": [
+    { "macro": "approach", "duration": 15 },
+    { "macro": "attack", "moveId": "sword_lunge" }
+  ],
+  "interruptConditions": ["opponent_winding_up"],
   "reasoning": "1-2 sentences explaining your plan"
 }`;
 
   if (errorContext) {
-    return prompt + `\n\nIMPORTANT: Your previous plan was invalid: ${errorContext}\nPlease choose a different valid plan.`;
+    return prompt + `\n\nIMPORTANT: Your previous sequence was invalid: ${errorContext}\nPlease choose a different valid sequence.`;
   }
 
   return prompt;
 }
 
-function validateTacticalPlan(parsed: any): TacticalPlan {
-  const defaultPlan: TacticalPlan = {
-    strategy: 'Closing distance and attacking.',
-    movementPattern: 'approach_direct',
-    primaryMove: 'basic_attack',
-    dodgeFrequency: 20,
-    aggressionLevel: 50,
-    reactions: {
-      ifOpponentShields: 'use_ranged',
-      ifOpponentRetreats: 'rush',
-      ifLowHP: 'berserk',
-      ifOpponentUsesRanged: 'dodge_close',
-    },
-    reasoning: 'Default plan: approach and attack.',
-  };
+function validateSequence(parsed: any): ActionSequence {
+  const defaultSeq = defaultSequenceFailure('Default due to validation failure.');
+  if (!parsed || typeof parsed !== 'object') return defaultSeq;
 
-  if (!parsed) return defaultPlan;
+  const strategy = typeof parsed.strategy === 'string' ? parsed.strategy.trim() : defaultSeq.strategy;
+  const reasoning = typeof parsed.reasoning === 'string' ? parsed.reasoning.trim() : defaultSeq.reasoning;
 
-  const strategy = typeof parsed.strategy === 'string' ? parsed.strategy.trim() : defaultPlan.strategy;
-  const reasoning = typeof parsed.reasoning === 'string' ? parsed.reasoning.trim() : defaultPlan.reasoning;
+  const actions: ActionSequence['actions'] = [];
+  if (Array.isArray(parsed.actions)) {
+    for (const a of parsed.actions) {
+      if (!a || typeof a !== 'object') continue;
+      const macro = (VALID_MACRO_ACTIONS as readonly string[]).includes(a.macro) ? a.macro : 'approach';
+      const duration = typeof a.duration === 'number' ? Math.max(1, Math.min(60, Math.round(a.duration))) : undefined;
+      const moveId = typeof a.moveId === 'string' ? a.moveId.trim().toLowerCase() : undefined;
+      const directionHint = typeof a.directionHint === 'string' ? a.directionHint.trim().toLowerCase() : undefined;
+      actions.push({ macro: macro as MacroAction, duration, moveId, directionHint });
+    }
+  }
+  if (actions.length === 0) {
+    actions.push({ macro: 'approach', duration: 20 }, { macro: 'attack' });
+  }
 
-  const movementPattern = (VALID_MOVEMENT_PATTERNS as readonly string[]).includes(parsed.movementPattern)
-    ? parsed.movementPattern
-    : defaultPlan.movementPattern;
+  const interruptConditions: string[] = [];
+  if (Array.isArray(parsed.interruptConditions)) {
+    for (const c of parsed.interruptConditions) {
+      if (typeof c === 'string') interruptConditions.push(c);
+    }
+  }
 
-  const primaryMove = typeof parsed.primaryMove === 'string' ? parsed.primaryMove.trim().toLowerCase() : defaultPlan.primaryMove;
-
-  const dodgeFrequency = typeof parsed.dodgeFrequency === 'number'
-    ? Math.max(0, Math.min(100, Math.round(parsed.dodgeFrequency)))
-    : defaultPlan.dodgeFrequency;
-
-  const aggressionLevel = typeof parsed.aggressionLevel === 'number'
-    ? Math.max(0, Math.min(100, Math.round(parsed.aggressionLevel)))
-    : defaultPlan.aggressionLevel;
-
-  const reactions: TacticalReactions = {
-    ifOpponentShields: (VALID_REACTION_OPTIONS as readonly string[]).includes(parsed.reactions?.ifOpponentShields)
-      ? parsed.reactions.ifOpponentShields : defaultPlan.reactions.ifOpponentShields,
-    ifOpponentRetreats: (VALID_REACTION_OPTIONS as readonly string[]).includes(parsed.reactions?.ifOpponentRetreats)
-      ? parsed.reactions.ifOpponentRetreats : defaultPlan.reactions.ifOpponentRetreats,
-    ifLowHP: (VALID_REACTION_OPTIONS as readonly string[]).includes(parsed.reactions?.ifLowHP)
-      ? parsed.reactions.ifLowHP : defaultPlan.reactions.ifLowHP,
-    ifOpponentUsesRanged: (VALID_REACTION_OPTIONS as readonly string[]).includes(parsed.reactions?.ifOpponentUsesRanged)
-      ? parsed.reactions.ifOpponentUsesRanged : defaultPlan.reactions.ifOpponentUsesRanged,
-  };
-
-  return {
-    strategy,
-    movementPattern,
-    primaryMove,
-    dodgeFrequency,
-    aggressionLevel,
-    reactions,
-    reasoning,
-  };
+  return { strategy, actions, interruptConditions, reasoning };
 }
 
 function buildMinimalRetryPrompt(agent: AgentState, opponent: AgentState, state: GameState): string {
-  return `You output exactly one JSON object. No markdown or explanation outside JSON.
+  return `Respond with ONLY a JSON object and nothing else.
 
-Required keys: strategy (string), movementPattern (string), primaryMove (string), dodgeFrequency (number 0-100), aggressionLevel (number 0-100), reasoning (string),
-reactions (object with ifOpponentShields, ifOpponentRetreats, ifLowHP, ifOpponentUsesRanged — each value a string).
+Example:
+{"strategy":"Rush and attack","actions":[{"macro":"approach","duration":15},{"macro":"attack","moveId":"basic_attack"}],"interruptConditions":["opponent_winding_up"],"reasoning":"Closing fast to strike"}
 
-movementPattern MUST be exactly one of: ${VALID_MOVEMENT_PATTERNS.join(', ')}.
-Each reaction value MUST be exactly one of: ${VALID_REACTION_OPTIONS.join(', ')}.
-primaryMove: prefer basic_attack or a known special move id.
+Your macro options: ${VALID_MACRO_ACTIONS.join(', ')}.
 
-Situation: tick ${state.tick}. You at (${Math.round(agent.position.x)},${Math.round(agent.position.y)}) HP ${agent.hp}/${agent.maxHp}. Opponent at (${Math.round(opponent.position.x)},${Math.round(opponent.position.y)}) HP ${opponent.hp}/${opponent.maxHp}.`;
+Situation: tick ${state.tick}. You at (${Math.round(agent.physics.position.x)},${Math.round(agent.physics.position.y)}) HP ${agent.hp}/${agent.maxHp}. Opponent at (${Math.round(opponent.physics.position.x)},${Math.round(opponent.physics.position.y)}) HP ${opponent.hp}/${opponent.maxHp}.`;
 }
 
-async function generateTacticalPlanOnce(
+function extractJson(raw: string): string | null {
+  // Strip markdown code blocks
+  let cleaned = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '');
+  cleaned = cleaned.trim();
+
+  // Find first { and last }
+  const firstBrace = cleaned.indexOf('{');
+  const lastBrace = cleaned.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    return cleaned.slice(firstBrace, lastBrace + 1);
+  }
+
+  // Sometimes models output arrays
+  const firstBracket = cleaned.indexOf('[');
+  const lastBracket = cleaned.lastIndexOf(']');
+  if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
+    return cleaned.slice(firstBracket, lastBracket + 1);
+  }
+
+  return null;
+}
+
+async function generateSequenceOnce(
   prompt: string,
   agentId: string
 ): Promise<{ ok: true; raw: string } | { ok: false; error: string }> {
   try {
-    console.log(`[LLM] Requesting tactical plan for agent ${agentId}...`);
+    console.log(`[LLM] Requesting action sequence for agent ${agentId}...`);
     const res = await fetchWithTimeout(`${OLLAMA_URL}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -295,10 +304,17 @@ async function generateTacticalPlanOnce(
     }
 
     const data = await res.json();
-    const raw = typeof data.response === 'string' ? data.response : '{}';
+    let raw = typeof data.response === 'string' ? data.response : '{}';
     if (!raw.trim()) {
       return { ok: false, error: 'Empty LLM response' };
     }
+
+    // Extract JSON if model wrapped it in prose/markdown
+    const extracted = extractJson(raw);
+    if (extracted) {
+      raw = extracted;
+    }
+
     return { ok: true, raw };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -306,6 +322,92 @@ async function generateTacticalPlanOnce(
   }
 }
 
+export async function getSequenceWithTrace(
+  agent: AgentState,
+  opponent: AgentState,
+  state: GameState,
+  playstyleMemory: string,
+  characterDescription: string,
+  actionHistory: ActionHistoryEntry[],
+  opponentHistory: ActionHistoryEntry[],
+  roundSummaries: RoundSummary[],
+  errorContext?: string
+): Promise<SequenceCallResult> {
+  const t0 = performance.now();
+
+  let playstyleProfile: PlaystyleProfile | null = null;
+  if (playstyleMemory) {
+    try {
+      playstyleProfile = JSON.parse(playstyleMemory);
+    } catch {
+      playstyleProfile = null;
+    }
+  }
+
+  const tendencies = analyzeOpponentTendencies(opponentHistory as BHActionHistoryEntry[]);
+
+  const prompt = buildSequencePrompt(
+    agent, opponent, state, playstyleProfile,
+    characterDescription, actionHistory, opponentHistory,
+    tendencies, roundSummaries, errorContext
+  );
+
+  const first = await generateSequenceOnce(prompt, agent.id);
+  if (!first.ok) {
+    const durationMs = performance.now() - t0;
+    return {
+      sequence: defaultSequenceFailure('Default due to LLM error.'),
+      source: 'default',
+      durationMs,
+      error: first.error,
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(first.raw);
+    const sequence = validateSequence(parsed);
+    const durationMs = performance.now() - t0;
+    console.log(
+      `[LLM] Sequence for ${agent.id}: ${sequence.actions.map((a) => a.macro).join(' -> ')}`
+    );
+    return { sequence, source: 'llm', durationMs };
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.warn(`[LLM] Parse failed for ${agent.id}, retry with minimal prompt: ${errMsg}`);
+
+    const retryPrompt = buildMinimalRetryPrompt(agent, opponent, state);
+    const second = await generateSequenceOnce(retryPrompt, agent.id);
+
+    if (second.ok) {
+      try {
+        const parsed2 = JSON.parse(second.raw);
+        const sequence = validateSequence(parsed2);
+        const durationMs = performance.now() - t0;
+        console.log(`[LLM] Retry sequence for ${agent.id}: ${sequence.actions.map((a) => a.macro).join(' -> ')}`);
+        return { sequence, source: 'retry_llm', durationMs, error: errMsg };
+      } catch (err2: unknown) {
+        const durationMs = performance.now() - t0;
+        const err2Msg = err2 instanceof Error ? err2.message : String(err2);
+        return {
+          sequence: defaultSequenceFailure('Default due to LLM error.'),
+          source: 'default',
+          durationMs,
+          error: `${errMsg}; retry: ${err2Msg}`,
+        };
+      }
+    }
+
+    const durationMs = performance.now() - t0;
+    return {
+      sequence: defaultSequenceFailure('Default due to LLM error.'),
+      source: 'default',
+      durationMs,
+      error: `${errMsg}; retry HTTP: ${second.error}`,
+    };
+  }
+}
+
+// Backward-compatible wrapper that adapts old TacticalPlanClient callers (if any)
 export async function getTacticalPlanWithTrace(
   agent: AgentState,
   opponent: AgentState,
@@ -316,194 +418,43 @@ export async function getTacticalPlanWithTrace(
   opponentHistory: ActionHistoryEntry[],
   roundSummaries: RoundSummary[],
   errorContext?: string
-): Promise<TacticalPlanCallResult> {
-  const t0 = performance.now();
-
-  const playstyleProfile: PlaystyleProfile | null = playstyleMemory
-    ? JSON.parse(playstyleMemory)
-    : null;
-
-  const tendencies = analyzeOpponentTendencies(opponentHistory as BHActionHistoryEntry[]);
-
-  const prompt = buildTacticalPrompt(
-    agent, opponent, state, playstyleProfile,
-    characterDescription, actionHistory, opponentHistory,
-    tendencies, roundSummaries, errorContext
-  );
-
-  const first = await generateTacticalPlanOnce(prompt, agent.id);
-  if (!first.ok) {
-    const durationMs = performance.now() - t0;
-    return {
-      plan: defaultTacticalPlanFailure('Default strategy due to LLM error.'),
-      source: 'default',
-      durationMs,
-      error: first.error,
-    };
-  }
-
-  try {
-    const parsed = JSON.parse(first.raw);
-    const plan = validateTacticalPlan(parsed);
-    const durationMs = performance.now() - t0;
-    console.log(
-      `[LLM] Tactical plan for ${agent.id}: ${plan.movementPattern} / ${plan.primaryMove} / agg:${plan.aggressionLevel} / dodge:${plan.dodgeFrequency}`
-    );
-    return { plan, source: 'llm', durationMs };
-  } catch (err: unknown) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    console.warn(`[LLM] Parse failed for ${agent.id}, retry with minimal prompt: ${errMsg}`);
-
-    const retryPrompt = buildMinimalRetryPrompt(agent, opponent, state);
-    const second = await generateTacticalPlanOnce(retryPrompt, agent.id);
-
-    if (second.ok) {
-      try {
-        const parsed2 = JSON.parse(second.raw);
-        const plan = validateTacticalPlan(parsed2);
-        const durationMs = performance.now() - t0;
-        console.log(`[LLM] Retry tactical plan for ${agent.id}: ${plan.movementPattern}`);
-        return { plan, source: 'retry_llm', durationMs, error: errMsg };
-      } catch (err2: unknown) {
-        const durationMs = performance.now() - t0;
-        const err2Msg = err2 instanceof Error ? err2.message : String(err2);
-        return {
-          plan: defaultTacticalPlanFailure('Default strategy due to LLM error.'),
-          source: 'default',
-          durationMs,
-          error: `${errMsg}; retry: ${err2Msg}`,
-        };
-      }
-    }
-
-    const durationMs = performance.now() - t0;
-    return {
-      plan: defaultTacticalPlanFailure('Default strategy due to LLM error.'),
-      source: 'default',
-      durationMs,
-      error: `${errMsg}; retry HTTP: ${second.error}`,
-    };
-  }
-}
-
-export async function getTacticalPlan(
-  agent: AgentState,
-  opponent: AgentState,
-  state: GameState,
-  playstyleMemory: string,
-  characterDescription: string,
-  actionHistory: ActionHistoryEntry[],
-  opponentHistory: ActionHistoryEntry[],
-  roundSummaries: RoundSummary[],
-  errorContext?: string
-): Promise<TacticalPlan> {
-  const r = await getTacticalPlanWithTrace(
-    agent,
-    opponent,
-    state,
-    playstyleMemory,
-    characterDescription,
-    actionHistory,
-    opponentHistory,
-    roundSummaries,
-    errorContext
-  );
-  return r.plan;
-}
-
-// Backward compatible: getAgentPlan wraps getTacticalPlan
-export async function getAgentPlan(
-  agent: AgentState,
-  opponent: AgentState,
-  state: GameState,
-  playstyleMemory: string,
-  characterDescription: string,
-  errorContext?: string
-): Promise<AgentPlan> {
-  const tactical = await getTacticalPlan(
-    agent, opponent, state, playstyleMemory,
-    characterDescription, [], [], [], errorContext
-  );
-
-  const planMap: Record<string, 'approach' | 'retreat' | 'attack' | 'defend' | 'idle'> = {
-    approach_direct: 'approach',
-    circle_strafe_left: 'approach',
-    circle_strafe_right: 'approach',
-    hit_and_retreat: 'attack',
-    dodge_and_counter: 'defend',
-    rush: 'attack',
-    kite: 'defend',
-    hold_position: 'defend',
-    feint_approach: 'approach',
-    retreat: 'retreat',
-  };
-
+): Promise<any> {
+  // This wrapper converts ActionSequence back to old TacticalPlan shape for any legacy callers.
+  const r = await getSequenceWithTrace(agent, opponent, state, playstyleMemory, characterDescription, actionHistory, opponentHistory, roundSummaries, errorContext);
   return {
-    plan: planMap[tactical.movementPattern] || 'approach',
-    preferredMove: tactical.primaryMove,
-    reasoning: tactical.reasoning,
+    plan: {
+      strategy: r.sequence.strategy,
+      movementPattern: 'approach_direct',
+      primaryMove: r.sequence.actions.find((a) => a.macro === 'attack')?.moveId || 'basic_attack',
+      dodgeFrequency: 30,
+      aggressionLevel: 50,
+      reactions: {
+        ifOpponentShields: 'wait',
+        ifOpponentRetreats: 'rush',
+        ifLowHP: 'retreat',
+        ifOpponentUsesRanged: 'dodge_close',
+      },
+      reasoning: r.sequence.reasoning,
+    },
+    source: r.source,
+    durationMs: r.durationMs,
+    error: r.error,
   };
 }
 
-export async function getAgentAction(
-  agent: AgentState,
-  opponent: AgentState,
-  state: GameState,
-  playstyleMemory: string,
-  characterDescription: string,
-  errorContext?: string
-): Promise<AgentAction> {
-  const plan = await getAgentPlan(agent, opponent, state, playstyleMemory, characterDescription, errorContext);
-  return {
-    action: plan.preferredMove,
-    reasoning: plan.reasoning,
-  };
-}
-
-// Coaching Conversation System
+/* ───────────────────────────────────────────
+   Coaching Conversation System (FIXED)
+   ─────────────────────────────────────────── */
 
 export interface CoachingContext {
   agentName: string;
   characterDescription: string;
-  money: number;
-  ownedMoves: string[];
-  ownedBoosts: string[];
   lastRoundResult?: { won: boolean; score: string; notes: string };
   opponentCharacter?: string;
   roundNumber: number;
 }
 
-function buildAvailableItemsDescription(ctx: CoachingContext): string {
-  const ownedMoves = ctx.ownedMoves
-    .map(id => {
-      const def = MOVE_CATALOG[id];
-      return def ? `${def.name} (${id}) - ${def.description}` : id;
-    })
-    .join('\n');
-
-  const ownedBoosts = ctx.ownedBoosts
-    .map(id => {
-      const def = MOVE_CATALOG[id];
-      return def ? `${def.name} (${id}) - ${def.description}` : id;
-    })
-    .join('\n');
-
-  const availableItems = Object.entries(MOVE_CATALOG)
-    .filter(([id]) => !ctx.ownedMoves.includes(id) && !ctx.ownedBoosts.includes(id))
-    .map(([id, def]) => `${def.name} (${id}) - ${def.cost}g - ${def.description}`)
-    .join('\n');
-
-  let desc = `You have ${ctx.money}g in gold.\n`;
-  if (ownedMoves) desc += `\nYour combat moves:\n${ownedMoves}`;
-  else desc += `\nYou have no combat moves yet (only basic attack).`;
-  if (ownedBoosts) desc += `\nYour stat boosts:\n${ownedBoosts}`;
-  desc += `\n\nAvailable items in the shop:\n${availableItems}`;
-  return desc;
-}
-
 function buildOpeningPrompt(ctx: CoachingContext): string {
-  const itemsDesc = buildAvailableItemsDescription(ctx);
-
   let context = '';
   if (ctx.lastRoundResult) {
     const { won, score, notes } = ctx.lastRoundResult;
@@ -513,11 +464,11 @@ function buildOpeningPrompt(ctx: CoachingContext): string {
   return `You are ${ctx.agentName}, ${ctx.characterDescription}. You are speaking to your lord/coach before a battle.
 
 ${context}
-${itemsDesc}
+You are in round ${ctx.roundNumber}. Your opponent is ${ctx.opponentCharacter || 'an unknown warrior'}.
 
-You are in round ${ctx.roundNumber}. Initiate a conversation with your lord. Ask for guidance on how to fight, referencing your available tools, your gold, and the current situation. Be in character — speak as ${ctx.characterDescription} would.
+Initiate a conversation with your lord. Ask for guidance on how to fight — your tactics, timing, and approach. Reference your fighting style and the opponent if you know them. Be in character.
 
-Keep it to 1-2 sentences. End with a question or request for guidance.
+Keep it to 1-2 sentences. End with a question about fighting strategy.
 
 Respond with exactly one JSON object: { "message": "..." }`;
 }
@@ -560,22 +511,18 @@ export async function generateAgentOpeningMessage(ctx: CoachingContext): Promise
 }
 
 function buildResponsePrompt(ctx: CoachingContext, conversation: CoachingMessage[], playerMessage: string): string {
-  const itemsDesc = buildAvailableItemsDescription(ctx);
-
   const transcript = conversation
     .map(m => `${m.sender === 'player' ? 'Coach' : 'You'}: ${m.content}`)
     .join('\n');
 
-  return `You are ${ctx.agentName}, ${ctx.characterDescription}. You are in conversation with your lord/coach.
-
-${itemsDesc}
+  return `You are ${ctx.agentName}, ${ctx.characterDescription}. You are in conversation with your lord/coach before battle.
 
 Conversation so far:
 ${transcript}
 
 Your coach just said: "${playerMessage}"
 
-Respond in character as ${ctx.characterDescription}. Acknowledge what your coach said, show understanding, and if appropriate ask a follow-up question or confirm your understanding. Keep it to 1-3 sentences.
+Respond in character. Acknowledge the advice, share your thoughts on how you'll apply it in combat, and if appropriate ask a follow-up about tactics, timing, or specific moves. Keep it to 1-3 sentences.
 
 Respond with exactly one JSON object: { "message": "..." }`;
 }
@@ -622,8 +569,6 @@ export async function generateAgentResponse(
 }
 
 function buildSynthesisPrompt(ctx: CoachingContext, conversation: CoachingMessage[]): string {
-  const itemsDesc = buildAvailableItemsDescription(ctx);
-
   const transcript = conversation
     .map(m => `${m.sender === 'player' ? 'Coach' : 'You'}: ${m.content}`)
     .join('\n');
@@ -631,8 +576,6 @@ function buildSynthesisPrompt(ctx: CoachingContext, conversation: CoachingMessag
   return `You are ${ctx.agentName}, ${ctx.characterDescription}. Here is your full coaching conversation with your lord:
 
 ${transcript}
-
-${itemsDesc}
 
 Based on this conversation, generate your fighting profile:
 
@@ -644,7 +587,7 @@ Based on this conversation, generate your fighting profile:
    - patience: how long you wait before committing (0=rush in immediately, 100=wait and observe)
    - defensiveness: how much you prioritize defense (0=all offense, 100=all defense)
    - combo_preference: how likely you are to chain abilities together (0=single moves, 100=combos)
-3. 2-4 specific behavioral directives — concrete tactics your lord wants you to follow. These should reference your actual available moves and be actionable. Examples: "use crossbow from max range", "wait for opponent to attack first then counter", "dodge frequently and attack during recovery", "circle strafe to the left while using sword lunge".
+3. 2-4 specific behavioral directives — concrete tactics your lord wants you to follow. These should be about WHEN and HOW to use your abilities in combat. Examples: "wait for opponent to attack first, then dodge and punish with sword_lunge", "use crossbow to poke from max range", "bait opponent into whiffing then counter-attack", "dodge_and_counter when opponent winds up a heavy attack".
 
 Respond with exactly one JSON object:
 { "narrative": "...", "parameters": { "aggressiveness": 50, "risk_tolerance": 50, "preferred_range": 50, "patience": 50, "defensiveness": 50, "combo_preference": 50 }, "directives": ["...", "..."] }`;
@@ -726,7 +669,7 @@ export async function generateRoundSummary(
   opponentId: string
 ): Promise<RoundSummary> {
   const keyEvents = eventLog
-    .filter((e) => e.type === 'attack' || e.type === 'death' || e.type === 'special' || e.type === 'dodge')
+    .filter((e) => e.type === 'attack' || e.type === 'death' || e.type === 'special' || e.type === 'dodge' || e.type === 'whiff' || e.type === 'counter_window')
     .filter((e) => e.agentId === agentId || e.agentId === opponentId)
     .slice(-15)
     .map((e) => `${e.type} by ${e.agentId === agentId ? 'you' : 'opponent'} at tick ${e.tick}`);
