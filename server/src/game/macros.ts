@@ -183,20 +183,20 @@ function executeMacro(
 
 function getMacroDefaultDuration(macro: MacroAction): number {
   switch (macro) {
-    case 'approach': return 20;
+    case 'approach': return 25;
     case 'circle_left':
-    case 'circle_right': return 30;
-    case 'feint_approach': return 18;
-    case 'bait': return 25;
+    case 'circle_right': return 35;
+    case 'feint_approach': return 25;
+    case 'bait': return 30;
     case 'dodge': return 5;
-    case 'attack': return 15; // generous default; actual attack ends when frame data says so
-    case 'retreat': return 20;
+    case 'attack': return 60; // long duration: close gap + commit attack
+    case 'retreat': return 25;
     case 'shield_up': return 10;
     case 'wait': return 15;
-    case 'kite': return 30;
-    case 'punish': return 12;
-    case 'dodge_and_counter': return 22;
-    case 'rushdown': return 25;
+    case 'kite': return 35;
+    case 'punish': return 15;
+    case 'dodge_and_counter': return 30;
+    case 'rushdown': return 50; // aggressive closing
     default: return 10;
   }
 }
@@ -339,20 +339,26 @@ function macroDodge(agent: AgentState, opponent: AgentState, hint?: string): Mac
 
 function macroAttack(agent: AgentState, opponent: AgentState, preferredMoveId?: string): MacroResult {
   if (!canInitiateAttack(agent)) {
-    return { inputAngle: null, speedMult: 1, moveId: null, dodgeDir: null, done: true, reasoning: 'Already attacking' };
+    // Circle while waiting to be able to attack
+    const toOpp = angleToTarget(agent, opponent.physics.position);
+    const side = tickRand(agent.id, agent.physics.position.x, 309) < 0.5 ? 1 : -1;
+    return { inputAngle: toOpp + side * (Math.PI / 2), speedMult: 0.7, moveId: null, dodgeDir: null, done: false, reasoning: 'Waiting for attack opening, circling' };
   }
 
   const moveId = preferredMoveId || getBestAvailableAttackMove(agent, opponent);
   if (!moveId) {
-    return { inputAngle: null, speedMult: 1, moveId: null, dodgeDir: null, done: true, reasoning: 'No attack available' };
+    // No attack off cooldown — circle to stay safe
+    const toOpp = angleToTarget(agent, opponent.physics.position);
+    const side = tickRand(agent.id, agent.physics.position.x, 310) < 0.5 ? 1 : -1;
+    return { inputAngle: toOpp + side * (Math.PI / 2), speedMult: 0.6, moveId: null, dodgeDir: null, done: false, reasoning: 'All attacks on cooldown, circling' };
   }
 
-  // If out of range, approach instead
+  // If out of range, rush toward opponent with high speed
   const def = getMoveDef(moveId);
   const dist = distanceBetweenAgents(agent, opponent);
   if (def?.range && dist > def.range) {
     const angle = angleToTarget(agent, opponent.physics.position);
-    return { inputAngle: angle, speedMult: 1.0, moveId: null, dodgeDir: null, done: false, reasoning: `Moving into range for ${moveId}` };
+    return { inputAngle: angle, speedMult: 1.3, moveId: null, dodgeDir: null, done: false, reasoning: `Closing fast for ${moveId}` };
   }
 
   return {
@@ -498,10 +504,17 @@ function macroRushdown(agent: AgentState, opponent: AgentState, ticks: number): 
     }
   }
 
+  // If we've been rushing for a while and no attack is ready, transition to circling
+  if (ticks > 30 && !getBestAvailableAttackMove(agent, opponent)) {
+    const toOpp = angleToTarget(agent, opponent.physics.position);
+    const side = tickRand(agent.id, agent.physics.position.x, 311) < 0.5 ? 1 : -1;
+    return { inputAngle: toOpp + side * (Math.PI / 2), speedMult: 0.7, moveId: null, dodgeDir: null, done: false, reasoning: 'Rushdown: circling for opening' };
+  }
+
   const angle = angleToTarget(agent, opponent.physics.position);
   return {
     inputAngle: angle,
-    speedMult: 1.1,
+    speedMult: 1.25,
     moveId: null,
     dodgeDir: null,
     done: false,

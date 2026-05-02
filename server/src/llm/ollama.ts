@@ -172,22 +172,30 @@ ${hpPressure}${roundSummaryStr}
 
 You must choose a sequence of macro-actions to execute over the next ~2 seconds (up to 40 ticks). Each macro is a pre-defined behavior. You can chain 1–6 macros in a sequence.
 
+TACTICAL GUIDANCE — be aggressive and commit to combat:
+- If far from opponent, use rushdown or feint_approach rather than plain approach
+- Once in range, use attack with your best move (sword_lunge, basic_attack, crossbow)
+- Chain multiple attacks for sustained pressure: e.g. attack -> attack -> circle_left
+- Use dodge_and_counter or bait if opponent is aggressive
+- Use punish ONLY when opponent_whiffed is active
+- Do NOT chain long waits — you are here to fight
+
 Available macros:
-- approach: close distance aggressively
-- circle_left / circle_right: orbit opponent at ideal range
+- approach: close distance (slower, use rushdown instead if far)
+- circle_left / circle_right: orbit opponent at ideal range, good between attacks
 - feint_approach: approach, then dodge sideways when close to bait an attack
 - bait: hover just outside opponent range, auto-dodge if they commit
-- dodge: quick burst evasion (can specify directionHint like "left" or "back_right")
-- attack: commit to an attack (specify moveId, e.g. "sword_lunge")
+- dodge: quick burst evasion (directionHint: "left", "right", "back_left", etc.)
+- attack: commit to an attack — ALWAYS specify moveId (e.g. "sword_lunge", "basic_attack")
 - retreat: create distance
 - shield_up: raise shield_block if available
-- wait: hold position, observe
+- wait: hold position briefly (max 10 ticks)
 - kite: maintain max range, use ranged attacks
 - punish: rush in and strike when opponent whiffs (misses an attack)
 - dodge_and_counter: bait opponent attack, dodge it, then counter-strike
-- rushdown: close distance fast and attack
+- rushdown: close distance fast and attack — BEST for aggressive opening
 
-Interrupt conditions (the sequence will abort if any trigger):
+Interrupt conditions (sequence aborts if any trigger):
 - opponent_winding_up
 - opponent_attacking
 - opponent_whiffed / opponent_recovery
@@ -203,12 +211,13 @@ Respond with exactly one JSON object:
 {
   "strategy": "1-2 sentence description of your current tactical thinking",
   "actions": [
-    { "macro": "approach", "duration": 15 },
-    { "macro": "attack", "moveId": "sword_lunge" }
+    { "macro": "rushdown", "duration": 20 },
+    { "macro": "attack", "moveId": "sword_lunge" },
+    { "macro": "circle_left", "duration": 15 }
   ],
   "interruptConditions": ["opponent_winding_up"],
   "reasoning": "1-2 sentences explaining your plan"
-}`;
+}`
 
   if (errorContext) {
     return prompt + `\n\nIMPORTANT: Your previous sequence was invalid: ${errorContext}\nPlease choose a different valid sequence.`;

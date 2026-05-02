@@ -150,6 +150,8 @@ function tickAgent(
       newPosition: { x: agent.physics.position.x, y: agent.physics.position.y },
       velocity: { x: agent.physics.velocity.x, y: agent.physics.velocity.y },
       facing: agent.physics.facingAngle,
+      hp: agent.hp,
+      maxHp: agent.maxHp,
     },
   });
 
